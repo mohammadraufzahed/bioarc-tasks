@@ -10,12 +10,16 @@ import { JsonTaskRepository } from "../src/adapters/json-task-repository";
 import { GitSubmoduleUpdater } from "../src/adapters/git-submodule-updater";
 
 const roots: string[] = [];
+const worktrees: Array<{ cwd: string; path: string }> = [];
 
 afterEach(() => {
+  for (const worktree of worktrees.splice(0)) {
+    spawnSync("git", ["worktree", "remove", "--force", worktree.path], { cwd: worktree.cwd, stdio: "ignore" });
+    rmSync(worktree.path, { recursive: true, force: true });
+  }
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
-
-test("task branch syncs with detected base, integrates, and only base is pushed", async () => {
+test("task branch syncs with detected base, integrates, and only base is pushed", { timeout: 30_000 }, async () => {
   const root = mkdtempSync(join(tmpdir(), "bioarc-git-test-"));
   roots.push(root);
   const origin = join(root, "origin.git");
@@ -46,10 +50,15 @@ test("task branch syncs with detected base, integrates, and only base is pushed"
   assert.ok(branch);
   const worktree = task.worktreePath;
   assert.ok(worktree);
+  worktrees.push({ cwd: main, path: worktree });
   const parallelBranch = parallelTask.branch;
   assert.ok(parallelBranch);
   const parallelWorktree = parallelTask.worktreePath;
   assert.ok(parallelWorktree);
+  worktrees.push({ cwd: main, path: parallelWorktree });
+  const managed = JSON.parse(execFileSync("omp", ["worktree", "list", "--json"], { cwd: main, encoding: "utf8" })) as Array<{ path: string; parentRepo: string }>;
+  assert.ok(managed.some((entry) => entry.path === worktree && entry.parentRepo === main));
+  assert.ok(managed.some((entry) => entry.path === parallelWorktree && entry.parentRepo === main));
   assert.notEqual(parallelWorktree, worktree);
   assert.equal((await repository.load(main)).length, 2);
   execFileSync("git", ["config", "user.name", "BioArc Test"], { cwd: worktree });
@@ -131,6 +140,7 @@ test("cleanup refuses dirty worktree", async () => {
     },
   } as never);
   const worktree = await adapter.createWorktree(main, "dirty-task", "bioarc/dirty-task", "master");
+  worktrees.push({ cwd: main, path: worktree });
   writeFileSync(join(worktree, "uncommitted.txt"), "keep me\n");
   const task = { id: "dirty-task", title: "dirty", status: "open" as const, createdAt: new Date().toISOString(), commits: [], branch: "bioarc/dirty-task", baseBranch: "master", worktreePath: worktree };
   const service = new TaskService({ load: async () => [task], save: async () => {} }, adapter);

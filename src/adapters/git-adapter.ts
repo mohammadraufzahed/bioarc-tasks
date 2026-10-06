@@ -1,5 +1,6 @@
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { GitPort } from "../ports";
 
@@ -41,10 +42,10 @@ export class ExtensionGitAdapter implements GitPort {
   async createWorktree(cwd: string, taskId: string, branch: string, base: string): Promise<string> {
     await this.run(cwd, ["fetch", "origin", base]);
     const commonDir = await this.run(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    const root = join(commonDir, "bioarc-worktrees");
-    mkdirSync(root, { recursive: true });
-    const path = join(root, taskId);
-    await this.run(cwd, ["worktree", "add", "-b", branch, path, `origin/${base}`]);
+    const repoKey = createHash("sha256").update(commonDir).digest("hex").slice(0, 10);
+    const path = join(homedir(), ".omp", "wt", `${basename(cwd)}-${repoKey}-${taskId}`);
+    const result = await this.pi.exec("omp", ["worktree", "add", "-C", cwd, "-b", branch, path, `origin/${base}`, "--quiet"], { cwd });
+    if (result.code !== 0) throw new Error(result.stderr || result.stdout || "OMP could not create the task worktree.");
     return path;
   }
 

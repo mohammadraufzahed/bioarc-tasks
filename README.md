@@ -35,7 +35,10 @@ task's changes first. Subjects follow:
 
 `نوع کامیت: تسک میزیتو عنوان تسک: <عنوان> فرد محول کننده: <سرپرست>`
 
-Task worktrees live under the Git common directory at `bioarc-worktrees/<task UUID>`.
+Task worktrees are created with `omp worktree add` under `~/.omp/wt/<project-and-task>`;
+they appear in `omp worktree list`. OMP does not expose a targeted remove command,
+so cleanup uses Git's per-worktree removal after checking the task worktree is clean;
+it never invokes OMP's global clear operation.
 The base branch is detected from `origin/HEAD` (falling back to the remote HEAD ref).
 Integration refuses a dirty base worktree or local base branch that differs from
 the fetched remote; rejected pushes never force-push.
