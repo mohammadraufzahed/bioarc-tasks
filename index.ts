@@ -1,16 +1,20 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { TaskService } from "./src/application/task-service";
+import { SetupService } from "./src/application/setup-service";
 import { ExtensionGitAdapter } from "./src/adapters/git-adapter";
+import { GitSubmoduleUpdater } from "./src/adapters/git-submodule-updater";
+import { JsonProjectConfig } from "./src/adapters/json-project-config";
 import { JsonTaskRepository } from "./src/adapters/json-task-repository";
 import { resolveTask } from "./src/domain/task";
 
 const defaultType = "com.bioarc.tasks.session-default";
-const actions = ["list", "create", "complete", "delete", "commit", "default"];
+const actions = ["list", "create", "complete", "delete", "commit", "default", "setup", "update"];
 
 export default function (pi: ExtensionAPI) {
   pi.setLabel("BioArc Tasks");
   const git = new ExtensionGitAdapter(pi);
   const tasks = new TaskService(new JsonTaskRepository(git), git);
+  const setup = new SetupService(new JsonProjectConfig(), new GitSubmoduleUpdater(pi));
   const defaults = new Map<string, string>();
   let sessionCwd = process.cwd();
 
@@ -24,7 +28,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("bioarc-task", {
-    description: "Manage BioArc tasks; autocomplete actions and task IDs",
+    description: "Manage BioArc tasks, project setup, and plugin updates",
     getArgumentCompletions: async (prefix) => {
       const [action, ...parts] = prefix.split(/\s+/);
       if (!action || !prefix.includes(" ")) return actions.filter((value) => value.startsWith(action ?? "")).map((value) => ({ value: `${value} `, label: value }));
@@ -53,6 +57,15 @@ export default function (pi: ExtensionAPI) {
         } else if (action === "create") {
           const task = await tasks.create(ctx.cwd, rest.join(" "));
           ctx.ui.notify(`Created ${task.id.slice(0, 8)}: ${task.title}`, "success");
+        } else if (action === "setup") {
+          const current = await setup.supervisor(ctx.cwd);
+          const supervisor = rest.join(" ").trim() || await ctx.ui.input("BioArc supervisor", current || "Enter supervisor name");
+          if (!supervisor?.trim()) return ctx.ui.notify("Setup cancelled; supervisor unchanged.", "info");
+          await setup.configureSupervisor(ctx.cwd, supervisor);
+          ctx.ui.notify(`BioArc Tasks configured. Supervisor: ${supervisor.trim()}`, "success");
+        } else if (action === "update") {
+          await setup.update(ctx.cwd);
+          ctx.ui.notify("BioArc Tasks updated from its tracked Git submodule. Restart the session to load the new version.", "success");
         } else if (action === "default") {
           if (rest[0] === "clear") {
             defaults.delete(sessionId);
@@ -93,13 +106,13 @@ export default function (pi: ExtensionAPI) {
             }
             ctx.ui.notify(`Deleted ${task.id.slice(0, 8)}; Git history unchanged.`, "success");
           } else {
-            const supervisor = process.env.BIOARC_SUPERVISOR;
-            if (!supervisor?.trim()) throw new Error("Set BIOARC_SUPERVISOR to the supervisor's name.");
+            const supervisor = await setup.supervisor(ctx.cwd);
+            if (!supervisor) throw new Error("Run /bioarc-task setup to configure the supervisor first.");
             const result = await tasks.commit(ctx.cwd, task.id, supervisor);
             ctx.ui.notify(`Committed ${result.hash.slice(0, 8)} for ${result.task.id.slice(0, 8)}.`, "success");
           }
         } else {
-          ctx.ui.notify("Usage: /bioarc-task list | create <title> | complete [id] | delete [id] | commit [id] | default [id|clear]", "info");
+          ctx.ui.notify("Usage: /bioarc-task list | create <title> | complete [id] | delete [id] | commit [id] | default [id|clear] | setup [supervisor] | update", "info");
         }
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");

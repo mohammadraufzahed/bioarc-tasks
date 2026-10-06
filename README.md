@@ -7,8 +7,14 @@ rewritten.
 
 ## Install
 
-Load `index.ts` as an Oh My Pi extension using the extension path configuration.
-Set `BIOARC_SUPERVISOR` to the single supervisor name used in commit subjects.
+Install as a Git submodule at `.omp/extensions/bioarc-tasks` and add
+`./.omp/extensions/bioarc-tasks/index.ts` to the project's `.omp/config.yml`
+`extensions` list. Then restart Oh My Pi and run `/bioarc-task setup` to set the
+single supervisor name. Re-run `setup` any time to change it; settings are
+written to the ignored local file `.omp/bioarc-tasks.json`.
+
+Run `/bioarc-task update` to pull the tracked submodule's configured branch.
+Restart the session after updating so Oh My Pi loads the new extension version.
 
 ## Commands
 
@@ -17,19 +23,24 @@ Set `BIOARC_SUPERVISOR` to the single supervisor name used in commit subjects.
 - `/bioarc-task list`
 - `/bioarc-task default [id|clear]` selects a session-specific default task. With no ID, opens a task picker.
 - `/bioarc-task commit [id]`, `/bioarc-task complete [id]`, `/bioarc-task delete [id]` use the session default when omitted; otherwise open a picker. Type an ID prefix to autocomplete a specific task.
+- `/bioarc-task setup [supervisor]` initializes or updates project supervisor settings.
+- `/bioarc-task update` updates the extension submodule.
 
-Task IDs are UUIDs; their first eight characters are shown and work as short IDs. Defaults are persisted in session history and remain separate per session. Commit uses only staged changes and records the resulting hash. Review and stage only the selected task's changes first. Delete removes only the task record, never Git history.
-
-Commit subject:
+Task IDs are UUIDs; their first eight characters are shown and work as short IDs.
+Defaults are persisted in session history and remain separate per session.
+Commits include only staged changes and record the resulting hash. Stage only the
+task's changes first. Subjects follow:
 
 `نوع کامیت: تسک میزیتو عنوان تسک: <عنوان> فرد محول کننده: <سرپرست>`
 
 ## Structure
 
-- `src/domain`: task invariants and BioArc commit subject.
-- `src/application`: `TaskService`, coordinating task use cases through ports.
-- `src/ports.ts`: repository and Git contracts.
-- `src/adapters`: Git execution and Git-directory JSON persistence.
-- `index.ts`: Oh My Pi adapter—commands, autocomplete, dialogs, and session defaults; wires adapters into the application service.
+- `src/domain`: task invariants and commit subject.
+- `src/application`: task and setup use cases.
+- `src/ports.ts`: repository, Git, project config, and update contracts.
+- `src/adapters`: Git execution, JSON persistence, and submodule update adapters.
+- `index.ts`: Oh My Pi adapter and composition root.
 
-The application service depends on the domain and ports; adapters implement ports. `index.ts` is the composition root, keeping Oh My Pi and Git/JSON concerns out of the domain.
+The application service depends on the domain and ports; adapters implement
+ports. `index.ts` wires them together, keeping Oh My Pi and Git/JSON concerns out
+of the domain.
