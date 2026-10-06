@@ -25,8 +25,8 @@ Restart the session after updating so Oh My Pi loads the new extension version.
 - `/bioarc-task commit [id]` syncs first, then commits staged task-worktree changes.
 - `/bioarc-task integrate <id>` syncs, merges into the clean local base branch, and pushes only that branch to `origin`.
 - `/bioarc-task cleanup <id>` removes a clean worktree; the local branch is deleted only if merged into its base branch.
-- `/bioarc-task list`, `/bioarc-task complete [id]`, `/bioarc-task delete [id]`, `/bioarc-task default [id|clear]`, `/bioarc-task setup [supervisor]`, `/bioarc-task update`.
-The AI receives `bioarc_task_create`, `bioarc_task_list`, `bioarc_task_status`, `bioarc_task_sync`, `bioarc_task_diff`, `bioarc_task_commit`, `bioarc_task_integrate`, and `bioarc_task_cleanup` tools.
+- `/bioarc-task select [id|clear]` selects an open task for this session; `default` remains an alias. The selected task is injected into the AI system context for every turn in that session only.
+The AI receives `bioarc_task_select` plus `bioarc_task_create`, `bioarc_task_list`, `bioarc_task_status`, `bioarc_task_sync`, `bioarc_task_diff`, `bioarc_task_commit`, `bioarc_task_integrate`, and `bioarc_task_cleanup` tools.
 
 Task IDs are UUIDs; their first eight characters are shown and work as short IDs.
 Defaults are persisted in session history and remain separate per session.
