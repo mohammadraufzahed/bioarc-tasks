@@ -8,6 +8,7 @@ import { ExtensionGitAdapter } from "../src/adapters/git-adapter";
 import { TaskService } from "../src/application/task-service";
 import { JsonTaskRepository } from "../src/adapters/json-task-repository";
 import { GitSubmoduleUpdater } from "../src/adapters/git-submodule-updater";
+import { commitSubject } from "../src/domain/task";
 
 const roots: string[] = [];
 const worktrees: Array<{ cwd: string; path: string }> = [];
@@ -43,8 +44,18 @@ test("task branch syncs with detected base, integrates, and only base is pushed"
   assert.equal(base, "master");
   const repository = new JsonTaskRepository(adapter);
   const service = new TaskService(repository, adapter);
-  const task = await service.create(main, "task one");
-  const parallelTask = await service.create(main, "task two");
+  const task = await service.create(main, "تسک یک");
+  const parallelTask = await service.create(main, "تسک دو");
+  const selectedExisting = await service.select(main, task.id);
+  assert.equal(selectedExisting.worktreePath, task.worktreePath);
+  const legacyTask = { id: "legacy-task-1234", title: "وظیفه قدیمی", status: "open" as const, createdAt: new Date().toISOString(), commits: [] };
+  const storedTasks = await repository.load(main);
+  storedTasks.push(legacyTask);
+  await repository.save(main, storedTasks);
+  const selectedLegacy = await service.select(main, legacyTask.id);
+  assert.ok(selectedLegacy.worktreePath);
+  assert.ok(selectedLegacy.branch);
+  worktrees.push({ cwd: main, path: selectedLegacy.worktreePath });
   assert.equal(task.baseBranch, base);
   const branch = task.branch;
   assert.ok(branch);
@@ -59,14 +70,18 @@ test("task branch syncs with detected base, integrates, and only base is pushed"
   const managed = JSON.parse(execFileSync("omp", ["worktree", "list", "--json"], { cwd: main, encoding: "utf8" })) as Array<{ path: string; parentRepo: string }>;
   assert.ok(managed.some((entry) => entry.path === worktree && entry.parentRepo === main));
   assert.ok(managed.some((entry) => entry.path === parallelWorktree && entry.parentRepo === main));
+  assert.ok(managed.some((entry) => entry.path === selectedLegacy.worktreePath && entry.parentRepo === main));
   assert.notEqual(parallelWorktree, worktree);
-  assert.equal((await repository.load(main)).length, 2);
+  assert.equal((await repository.load(main)).length, 3);
   execFileSync("git", ["config", "user.name", "BioArc Test"], { cwd: worktree });
   execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: worktree });
   writeFileSync(join(worktree, "task.txt"), "task change\n");
   execFileSync("git", ["add", "task.txt"], { cwd: worktree });
-  const taskCommit = await adapter.commit(worktree, "task change");
+  const { hash: taskCommit } = await service.commit(main, task.id, "سرپرست");
   assert.match(taskCommit, /^[0-9a-f]{40}$/);
+  const subject = execFileSync("git", ["log", "-1", "--format=%s"], { cwd: worktree, encoding: "utf8" }).trim();
+  assert.equal(subject, "نوع کامیت: تسک میزیتو عنوان تسک: تسک یک فرد محول کننده: سرپرست");
+  assert.throws(() => commitSubject("English title", "سرپرست"), /پیام کامیت انگلیسی مجاز نیست/);
 
   writeFileSync(join(main, "main.txt"), "base advanced\n");
   execFileSync("git", ["add", "main.txt"], { cwd: main });
@@ -139,7 +154,7 @@ test("cleanup refuses dirty worktree", async () => {
       return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
     },
   } as never);
-  const worktree = await adapter.createWorktree(main, "dirty-task", "bioarc/dirty-task", "master");
+  const worktree = await adapter.ensureWorktree(main, "dirty-task", "bioarc/dirty-task", "master");
   worktrees.push({ cwd: main, path: worktree });
   writeFileSync(join(worktree, "uncommitted.txt"), "keep me\n");
   const task = { id: "dirty-task", title: "dirty", status: "open" as const, createdAt: new Date().toISOString(), commits: [], branch: "bioarc/dirty-task", baseBranch: "master", worktreePath: worktree };

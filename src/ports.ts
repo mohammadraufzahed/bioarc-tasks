@@ -10,7 +10,7 @@ export interface GitPort {
   defaultBranch(cwd: string): Promise<string>;
   hasStagedChanges(cwd: string): Promise<boolean>;
   commit(cwd: string, message: string): Promise<string>;
-  createWorktree(cwd: string, taskId: string, branch: string, base: string): Promise<string>;
+  ensureWorktree(cwd: string, taskId: string, branch: string, base: string, existingPath?: string): Promise<string>;
   removeWorktree(cwd: string, path: string, base: string): Promise<boolean>;
   worktreeStatus(cwd: string, path: string): Promise<{ branch: string; dirty: boolean }>;
   syncWorktree(cwd: string, path: string, base: string): Promise<void>;

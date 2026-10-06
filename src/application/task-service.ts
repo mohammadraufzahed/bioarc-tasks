@@ -16,8 +16,19 @@ export class TaskService {
     const task = createTask(title);
     task.baseBranch = await this.git.defaultBranch(cwd);
     task.branch = `bioarc/task-${task.id.slice(0, 8)}`;
-    task.worktreePath = await this.git.createWorktree(cwd, task.id, task.branch, task.baseBranch);
+    task.worktreePath = await this.git.ensureWorktree(cwd, task.id, task.branch, task.baseBranch);
     tasks.push(task);
+    await this.repository.save(cwd, tasks);
+    return task;
+  }
+
+  async select(cwd: string, id: string): Promise<Task> {
+    const tasks = await this.repository.load(cwd);
+    const task = resolveTask(tasks, id);
+    if (task.status !== "open") throw new Error("Select an open task.");
+    task.baseBranch ??= await this.git.defaultBranch(cwd);
+    task.branch ??= `bioarc/task-${task.id.slice(0, 8)}`;
+    task.worktreePath = await this.git.ensureWorktree(cwd, task.id, task.branch, task.baseBranch, task.worktreePath);
     await this.repository.save(cwd, tasks);
     return task;
   }

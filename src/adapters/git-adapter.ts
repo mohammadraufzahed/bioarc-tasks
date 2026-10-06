@@ -39,12 +39,25 @@ export class ExtensionGitAdapter implements GitPort {
     return this.run(cwd, ["rev-parse", "HEAD"]);
   }
 
-  async createWorktree(cwd: string, taskId: string, branch: string, base: string): Promise<string> {
+  async ensureWorktree(cwd: string, taskId: string, branch: string, base: string, existingPath?: string): Promise<string> {
+    if (existingPath) {
+      const existing = await this.pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd: existingPath });
+      if (existing.code === 0) {
+        const existingBranch = await this.run(existingPath, ["branch", "--show-current"]);
+        if (existingBranch !== branch) throw new Error(`Task worktree is on branch ${existingBranch || "(detached)"}, expected ${branch}.`);
+        return existingPath;
+      }
+    }
     await this.run(cwd, ["fetch", "origin", base]);
     const commonDir = await this.run(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
     const repoKey = createHash("sha256").update(commonDir).digest("hex").slice(0, 10);
     const path = join(homedir(), ".omp", "wt", `${basename(cwd)}-${repoKey}-${taskId}`);
-    const result = await this.pi.exec("omp", ["worktree", "add", "-C", cwd, "-b", branch, path, `origin/${base}`, "--quiet"], { cwd });
+    const branchExists = await this.pi.exec("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { cwd });
+    if (branchExists.code !== 0 && branchExists.code !== 1) throw new Error(branchExists.stderr || "Unable to inspect the task branch.");
+    const args = branchExists.code === 0
+      ? ["worktree", "add", "-C", cwd, path, branch, "--quiet"]
+      : ["worktree", "add", "-C", cwd, "-b", branch, path, `origin/${base}`, "--quiet"];
+    const result = await this.pi.exec("omp", args, { cwd });
     if (result.code !== 0) throw new Error(result.stderr || result.stdout || "OMP could not create the task worktree.");
     return path;
   }

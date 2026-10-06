@@ -19,13 +19,14 @@ Restart the session after updating so Oh My Pi loads the new extension version.
 ## Commands
 
 - `/bioarc-task` offers autocomplete for actions and task IDs.
-- `/bioarc-task create <title>` creates a task branch and isolated worktree from `origin`'s default branch, then selects it for the current session.
+- `/bioarc-task create <title>` creates an OMP-managed task worktree and selects it for the current session.
 - `/bioarc-task sync <id>` merges the latest base branch into the task branch; conflicts leave the worktree for resolution.
 - `/bioarc-task diff <id>` shows task changes relative to its base branch.
 - `/bioarc-task commit [id]` syncs first, then commits staged task-worktree changes.
 - `/bioarc-task integrate <id>` syncs, merges into the clean local base branch, and pushes only that branch to `origin`.
 - `/bioarc-task cleanup <id>` removes a clean worktree; the local branch is deleted only if merged into its base branch.
-- `/bioarc-task select [id|clear]` selects an open task for this session; `default` remains an alias. Every turn receives its title, branch, worktree, and task-specific rules: edit only in the task worktree, sync before commit/integration, never push task branches, and integrate/complete/clean up only when asked.
+- `/bioarc-task select [id|clear]` selects an open task for this session; existing valid worktrees are reused, and tasks without one get an OMP-managed worktree. `default` remains an alias. Every turn receives its title, branch, worktree, and task-specific rules.
+- Commits must use `bioarc_task_commit` for only the session-selected task. If none is selected, ask the user which task before selecting it. Commit subjects require Persian task titles and supervisor names; English commit subjects are rejected.
 The AI receives `bioarc_task_select` plus `bioarc_task_create`, `bioarc_task_list`, `bioarc_task_status`, `bioarc_task_sync`, `bioarc_task_diff`, `bioarc_task_commit`, `bioarc_task_integrate`, and `bioarc_task_cleanup` tools.
 
 Task IDs are UUIDs; their first eight characters are shown and work as short IDs.

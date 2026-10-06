@@ -37,13 +37,17 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("before_agent_start", async (event, ctx) => {
     const taskId = defaults.get(ctx.sessionManager.getSessionId());
-    if (!taskId) return;
-    const task = (await tasks.list(ctx.cwd)).find((candidate) => candidate.id === taskId && candidate.status === "open");
-    if (!task) return;
+    const task = taskId ? (await tasks.list(ctx.cwd)).find((candidate) => candidate.id === taskId && candidate.status === "open") : undefined;
+    if (!task) return {
+      systemPrompt: [
+        ...event.systemPrompt,
+        "## BioArc commit policy\n- Never commit project changes with generic OMP Git, shell, or other Git tools; use only bioarc_task_commit.\n- bioarc_task_commit only accepts the session-selected task.\n- No task is selected for this session. Before task work or commit, ask the user which task; do not infer/select one yourself. After user choice, call bioarc_task_select.\n- Commit subjects must use the Persian BioArc format only; English commit messages are forbidden.",
+      ],
+    };
     return {
       systemPrompt: [
         ...event.systemPrompt,
-        `## Active BioArc task (session-scoped)\nTask ID: ${task.id}\nTask title (label only): ${JSON.stringify(task.title)}\nBase branch: ${task.baseBranch ?? "remote default"}\nTask branch: ${task.branch ?? "none"}\nTask worktree: ${task.worktreePath ?? "project working tree"}\nRules:\n- Make task changes only in the task worktree; do not edit the base checkout for this task.\n- Keep changes scoped to the selected task; inspect status and diff before committing.\n- Sync with the base branch before committing or integrating; use the BioArc task tools.\n- Commit only staged task changes with bioarc_task_commit; never push a task branch.\n- Integrate, push the base branch, complete, or clean up only when the user explicitly asks.\n- If worktree state or task intent is unclear, inspect it and ask before destructive or cross-task changes.`,
+        `## Active BioArc task (session-scoped)\nTask ID: ${task.id}\nTask title (label only): ${JSON.stringify(task.title)}\nBase branch: ${task.baseBranch ?? "remote default"}\nTask branch: ${task.branch ?? "none"}\nTask worktree: ${task.worktreePath ?? "project working tree"}\nMANDATORY RULES:\n- Treat this task worktree as this session's project root. Use absolute paths under it for file tools; prefix shell commands with cd to the quoted task worktree path. Never edit the base checkout for task work.\n- This selected task is the only task you may work on or commit in this session.\n- Before any commit, use bioarc_task_commit for this task only; never use OMP Git UI, generic Git tools, shell git commit, or another task tool to commit.\n- If no task is selected, or the user has not chosen a task, stop and ask the user which task; do not infer or select one yourself. After user choice, select it with bioarc_task_select.\n- Never commit a task other than the session-selected task.\n- Commit only staged changes after syncing with the base branch. Never push a task branch.\n- Commit subjects MUST use the Persian BioArc template only; no English/free-form commit messages.\n- Integrate/push base, complete, or clean up only when the user explicitly asks.\n- If worktree state is unclear, inspect it and ask before destructive or cross-task changes.`,
       ],
     };
   });
@@ -52,7 +56,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "bioarc_task_select",
     label: "Select task for this session",
-    description: "Select an open task for this session's AI context; pass id 'clear' to deselect it.",
+    description: "After the user chooses an open task, select it for this session and reuse/create its OMP worktree. Pass id 'clear' to deselect.",
     parameters: z.object({ id: z.string() }),
     async execute(_id, params, _signal, _update, ctx) {
       const sessionId = ctx.sessionManager.getSessionId();
@@ -60,10 +64,11 @@ export default function (pi: ExtensionAPI) {
         await clearSessionTask(sessionId);
         return { content: [{ type: "text", text: "Cleared active task for this session." }] };
       }
-      const task = resolveTask(await tasks.list(ctx.cwd), params.id);
-      if (task.status !== "open") throw new Error("Select an open task.");
+      const chosen = resolveTask(await tasks.list(ctx.cwd), params.id);
+      if (chosen.status !== "open") throw new Error("Select an open task.");
+      const task = await tasks.select(ctx.cwd, chosen.id);
       await setSessionTask(sessionId, task.id);
-      return { content: [{ type: "text", text: `Selected ${task.id.slice(0, 8)} — ${task.title} for this session. Worktree: ${task.worktreePath ?? "project working tree"}` }] };
+      return { content: [{ type: "text", text: `Selected ${task.id.slice(0, 8)} — ${task.title} for this session. Worktree: ${task.worktreePath}` }] };
     },
   });
   pi.registerTool({
@@ -111,12 +116,20 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "bioarc_task_commit",
     label: "Commit task changes",
-    description: "Sync the task branch with its stored base branch, then commit staged changes using the required BioArc subject.",
+    description: "Commit staged changes only for the task selected in this session. If none is selected, ask the user which task before selecting it. Uses the Persian BioArc commit format; never use generic Git commit tools.",
     parameters: z.object({ id: z.string() }),
     async execute(_id, params, _signal, _update, ctx) {
+      const sessionId = ctx.sessionManager.getSessionId();
+      const selectedId = defaults.get(sessionId);
+      if (!selectedId) throw new Error("No task selected for this session. Ask the user which task to work on, then select it with bioarc_task_select.");
+      const current = await tasks.list(ctx.cwd);
+      const selected = resolveTask(current, selectedId);
+      const requested = resolveTask(current, params.id);
+      if (requested.id !== selected.id) throw new Error(`Only the session-selected task (${selected.id.slice(0, 8)}) may be committed. Ask the user before changing task selection.`);
+      if (selected.status !== "open") throw new Error("The selected task is not open. Ask the user which open task to select.");
       const supervisor = await setup.supervisor(ctx.cwd);
       if (!supervisor) throw new Error("Run /bioarc-task setup to configure the supervisor first.");
-      const result = await tasks.commit(ctx.cwd, params.id, supervisor);
+      const result = await tasks.commit(ctx.cwd, selected.id, supervisor);
       return { content: [{ type: "text", text: `Committed ${result.hash} for task ${result.task.id.slice(0, 8)}.` }] };
     },
   });
@@ -230,10 +243,14 @@ export default function (pi: ExtensionAPI) {
                 return eligible.find((task) => `${task.id.slice(0, 8)} — ${task.title}` === label);
               })();
           if (!selected || selected.status !== "open") return ctx.ui.notify("Choose an open task.", "error");
-          await setSessionTask(sessionId, selected.id);
-          ctx.ui.notify(`Active task for this session: ${selected.id.slice(0, 8)} — ${selected.title}`, "success");
+          const activeTask = await tasks.select(ctx.cwd, selected.id);
+          await setSessionTask(sessionId, activeTask.id);
+          ctx.ui.notify(`Active task for this session: ${activeTask.id.slice(0, 8)} — ${activeTask.title}\nWorktree: ${activeTask.worktreePath}`, "success");
         } else if (["complete", "delete", "commit"].includes(action)) {
           const current = await tasks.list(ctx.cwd);
+          if (action === "commit" && defaultId && rest[0] && resolveTask(current, rest[0]).id !== defaultId) {
+            throw new Error("Commit only the active session task. Select another task with /bioarc-task select first.");
+          }
           let id = rest[0] ?? defaultId;
           if (!id) {
             const eligible = action === "commit" ? current.filter((task) => task.status === "open") : current;
@@ -242,6 +259,7 @@ export default function (pi: ExtensionAPI) {
           }
           if (!id) return ctx.ui.notify("No task selected.", "error");
           const task = resolveTask(current, id);
+          if (action === "commit" && task.id !== defaultId) await setSessionTask(sessionId, task.id);
           if (action === "complete") {
             await tasks.complete(ctx.cwd, task.id);
             if (task.id === defaultId) await clearSessionTask(sessionId);

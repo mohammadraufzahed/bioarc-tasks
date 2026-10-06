@@ -31,5 +31,6 @@ export function completeTask(task: Task, now = new Date().toISOString()): void {
 }
 
 export function commitSubject(title: string, supervisor: string): string {
+  if (/\p{Script=Latin}/u.test(title) || /\p{Script=Latin}/u.test(supervisor)) throw new Error("عنوان تسک و نام سرپرست باید فارسی باشند؛ پیام کامیت انگلیسی مجاز نیست.");
   return `نوع کامیت: تسک میزیتو عنوان تسک: ${title} فرد محول کننده: ${supervisor}`;
 }
