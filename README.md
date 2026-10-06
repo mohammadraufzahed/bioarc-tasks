@@ -23,3 +23,13 @@ Task IDs are UUIDs; their first eight characters are shown and work as short IDs
 Commit subject:
 
 `نوع کامیت: تسک میزیتو عنوان تسک: <عنوان> فرد محول کننده: <سرپرست>`
+
+## Structure
+
+- `src/domain`: task invariants and BioArc commit subject.
+- `src/application`: `TaskService`, coordinating task use cases through ports.
+- `src/ports.ts`: repository and Git contracts.
+- `src/adapters`: Git execution and Git-directory JSON persistence.
+- `index.ts`: Oh My Pi adapter—commands, autocomplete, dialogs, and session defaults; wires adapters into the application service.
+
+The application service depends on the domain and ports; adapters implement ports. `index.ts` is the composition root, keeping Oh My Pi and Git/JSON concerns out of the domain.
