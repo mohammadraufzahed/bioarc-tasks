@@ -12,17 +12,14 @@ Set `BIOARC_SUPERVISOR` to the single supervisor name used in commit subjects.
 
 ## Commands
 
-- `/bioarc-task list`
+- `/bioarc-task` offers autocomplete for actions and task IDs.
 - `/bioarc-task create <title>`
-- `/bioarc-task complete <id>`
-- `/bioarc-task delete <id>`
-- `/bioarc-task commit <id>`
+- `/bioarc-task list`
+- `/bioarc-task default [id|clear]` selects a session-specific default task. With no ID, opens a task picker.
+- `/bioarc-task commit [id]`, `/bioarc-task complete [id]`, `/bioarc-task delete [id]` use the session default when omitted; otherwise open a picker. Type an ID prefix to autocomplete a specific task.
 
-Commit only commits already staged changes. Review and stage only the selected
-task's changes before running it. Subject format:
+Task IDs are UUIDs; their first eight characters are shown and work as short IDs. Defaults are persisted in session history and remain separate per session. Commit uses only staged changes and records the resulting hash. Review and stage only the selected task's changes first. Delete removes only the task record, never Git history.
+
+Commit subject:
 
 `نوع کامیت: تسک میزیتو عنوان تسک: <عنوان> فرد محول کننده: <سرپرست>`
-
-Task IDs are UUIDs; their first eight characters work as short IDs. Commit
-hashes are recorded after successful commits. Tasks are local to each Git
-repository and are not synced or included in commits.
