@@ -17,6 +17,14 @@ export class ExtensionGitAdapter implements GitPort {
     if (result.code !== 0) throw new Error("Run this command inside a Git repository.");
     return result.stdout.trim();
   }
+  async defaultBranch(cwd: string): Promise<string> {
+    const localHead = await this.pi.exec("git", ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], { cwd });
+    if (localHead.code === 0 && localHead.stdout.trim().startsWith("origin/")) return localHead.stdout.trim().slice("origin/".length);
+    const remoteHead = await this.pi.exec("git", ["ls-remote", "--symref", "origin", "HEAD"], { cwd });
+    const match = remoteHead.stdout.match(/^ref: refs\/heads\/(.+)\tHEAD$/m);
+    if (remoteHead.code !== 0 || !match?.[1]) throw new Error(remoteHead.stderr || "Unable to detect origin's default branch.");
+    return match[1];
+  }
 
   async hasStagedChanges(cwd: string): Promise<boolean> {
     const result = await this.pi.exec("git", ["diff", "--cached", "--quiet"], { cwd });
@@ -40,10 +48,10 @@ export class ExtensionGitAdapter implements GitPort {
     return path;
   }
 
-  async removeWorktree(cwd: string, path: string): Promise<boolean> {
+  async removeWorktree(cwd: string, path: string, base: string): Promise<boolean> {
     const branch = await this.run(path, ["branch", "--show-current"]);
     await this.run(cwd, ["worktree", "remove", path]);
-    const merged = await this.run(cwd, ["branch", "--merged", "main", "--list", branch]);
+    const merged = await this.run(cwd, ["branch", "--merged", base, "--list", branch]);
     if (!merged) return false;
     await this.run(cwd, ["branch", "-d", branch]);
     return true;
@@ -67,10 +75,10 @@ export class ExtensionGitAdapter implements GitPort {
 
   async integrateWorktree(cwd: string, path: string, base: string): Promise<string> {
     const status = await this.run(cwd, ["status", "--porcelain"]);
-    if (status) throw new Error("Main worktree has uncommitted changes; refusing integration.");
+    if (status) throw new Error("Base worktree has uncommitted changes; refusing integration.");
     await this.run(cwd, ["fetch", "origin", base]);
     const currentBranch = await this.run(cwd, ["branch", "--show-current"]);
-    if (currentBranch !== base) throw new Error(`Switch the main worktree to ${base} before integration.`);
+    if (currentBranch !== base) throw new Error(`Switch the base worktree to ${base} before integration.`);
     const taskStatus = await this.run(path, ["status", "--porcelain"]);
     if (taskStatus) throw new Error("Task worktree has uncommitted changes; commit or clean them before integration.");
     await this.run(path, ["merge", "--no-edit", `origin/${base}`]);
@@ -84,7 +92,7 @@ export class ExtensionGitAdapter implements GitPort {
       throw new Error(mergeResult.stderr || "Merge failed; task worktree was preserved.");
     }
     const push = await this.pi.exec("git", ["push", "origin", base], { cwd });
-    if (push.code !== 0) throw new Error(push.stderr || "Push failed; local base contains the integration. Update and retry pushing main.");
+    if (push.code !== 0) throw new Error(push.stderr || `Push failed; local ${base} contains the integration. Update and retry pushing ${base}.`);
     return await this.run(cwd, ["rev-parse", "HEAD"]);
   }
 }

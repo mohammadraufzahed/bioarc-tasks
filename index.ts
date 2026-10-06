@@ -31,11 +31,11 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "bioarc_task_create",
     label: "Create BioArc task worktree",
-    description: "Create a task and isolated local worktree branch from origin/main.",
+    description: "Create a task and isolated local worktree branch from the configured origin default branch.",
     parameters: z.object({ title: z.string() }),
     async execute(_id, params, _signal, _update, ctx) {
       const task = await tasks.create(ctx.cwd, params.title);
-      return { content: [{ type: "text", text: `Task ${task.id.slice(0, 8)} created. Branch: ${task.branch}; worktree: ${task.worktreePath}` }] };
+      return { content: [{ type: "text", text: `Task ${task.id.slice(0, 8)} created. Base: ${task.baseBranch}; branch: ${task.branch}; worktree: ${task.worktreePath}` }] };
     },
   });
   pi.registerTool({
@@ -45,33 +45,33 @@ export default function (pi: ExtensionAPI) {
     parameters: z.object({}),
     async execute(_id, _params, _signal, _update, ctx) {
       const current = await tasks.list(ctx.cwd);
-      return { content: [{ type: "text", text: current.map((task) => `${task.id.slice(0, 8)} [${task.status}] ${task.title} | ${task.branch ?? "no branch"} | ${task.worktreePath ?? "no worktree"}`).join("\n") || "No BioArc tasks." }] };
+      return { content: [{ type: "text", text: current.map((task) => `${task.id.slice(0, 8)} [${task.status}] ${task.title} | base ${task.baseBranch ?? "remote default"} | ${task.branch ?? "no branch"} | ${task.worktreePath ?? "no worktree"}`).join("\n") || "No BioArc tasks." }] };
     },
   });
   pi.registerTool({
     name: "bioarc_task_sync",
-    label: "Sync task with main",
-    description: "Fetch origin/main and merge it into the task branch. Conflicts preserve the task worktree.",
+    label: "Sync task with base branch",
+    description: "Fetch the configured origin default branch and merge it into the task branch. Conflicts preserve the task worktree.",
     parameters: z.object({ id: z.string() }),
     async execute(_id, params, _signal, _update, ctx) {
       await tasks.sync(ctx.cwd, params.id);
-      return { content: [{ type: "text", text: `Task ${params.id} synced with origin/main.` }] };
+      return { content: [{ type: "text", text: `Task ${params.id} synced with its base branch.` }] };
     },
   });
   pi.registerTool({
     name: "bioarc_task_diff",
     label: "Inspect task changes",
-    description: "Show a diffstat for task changes relative to origin/main.",
+    description: "Show a diffstat for task changes relative to its configured base branch.",
     parameters: z.object({ id: z.string() }),
     async execute(_id, params, _signal, _update, ctx) {
       const diff = await tasks.diff(ctx.cwd, params.id);
-      return { content: [{ type: "text", text: diff || "No task changes relative to origin/main." }] };
+      return { content: [{ type: "text", text: diff || "No task changes relative to its base branch." }] };
     },
   });
   pi.registerTool({
     name: "bioarc_task_commit",
     label: "Commit task changes",
-    description: "Sync task branch with main, then commit staged changes using the required BioArc subject.",
+    description: "Sync the task branch with its stored base branch, then commit staged changes using the required BioArc subject.",
     parameters: z.object({ id: z.string() }),
     async execute(_id, params, _signal, _update, ctx) {
       const supervisor = await setup.supervisor(ctx.cwd);
@@ -82,18 +82,20 @@ export default function (pi: ExtensionAPI) {
   });
   pi.registerTool({
     name: "bioarc_task_integrate",
-    label: "Integrate task into main",
-    description: "Sync task with main, merge it into the local main worktree, and push only main to origin.",
+    label: "Integrate task into base branch",
+    description: "Sync task with its base branch, merge it into the clean local base worktree, and push only that base branch to origin.",
     parameters: z.object({ id: z.string() }),
     async execute(_id, params, _signal, _update, ctx) {
-      const hash = await tasks.integrate(ctx.cwd, params.id);
-      return { content: [{ type: "text", text: `Integrated task into main; main HEAD is ${hash}. Only main was pushed.` }] };
+      const task = resolveTask(await tasks.list(ctx.cwd), params.id);
+      const base = task.baseBranch ?? await git.defaultBranch(ctx.cwd);
+      const hash = await tasks.integrate(ctx.cwd, task.id);
+      return { content: [{ type: "text", text: `Integrated task into ${base}; HEAD is ${hash}. Only ${base} was pushed.` }] };
     },
   });
   pi.registerTool({
     name: "bioarc_task_cleanup",
     label: "Clean up task worktree",
-    description: "Remove a clean task worktree. Deletes its local branch only if merged into main.",
+    description: "Remove a clean task worktree. Deletes its local branch only if merged into its base branch.",
     parameters: z.object({ id: z.string() }),
     async execute(_id, params, _signal, _update, ctx) {
       await tasks.cleanup(ctx.cwd, params.id);
@@ -138,24 +140,25 @@ export default function (pi: ExtensionAPI) {
       try {
         if (action === "list") {
           const current = await tasks.list(ctx.cwd);
-          ctx.ui.notify(current.length ? current.map((task) => `${task.id.slice(0, 8)} [${task.status}]${task.id === defaultId ? " [session default]" : ""} ${task.title} (${task.commits.length} commits)${task.branch ? ` — ${task.branch} — ${task.worktreePath}` : ""}`).join("\n") : "No BioArc tasks.", "info");
+          ctx.ui.notify(current.length ? current.map((task) => `${task.id.slice(0, 8)} [${task.status}]${task.id === defaultId ? " [session default]" : ""} ${task.title} (${task.commits.length} commits)${task.branch ? ` — ${task.baseBranch ?? "base"} — ${task.branch} — ${task.worktreePath}` : ""}`).join("\n") : "No BioArc tasks.", "info");
         } else if (action === "create") {
           const task = await tasks.create(ctx.cwd, rest.join(" "));
-          ctx.ui.notify(`Created ${task.id.slice(0, 8)}: ${task.title}\nBranch: ${task.branch}\nWorktree: ${task.worktreePath}`, "success");
+          ctx.ui.notify(`Created ${task.id.slice(0, 8)}: ${task.title}\nBase: ${task.baseBranch}\nBranch: ${task.branch}\nWorktree: ${task.worktreePath}`, "success");
         } else if (["sync", "diff", "integrate", "cleanup"].includes(action)) {
           const id = rest[0];
           if (!id) throw new Error(`Usage: /bioarc-task ${action} <id>`);
           const task = resolveTask(await tasks.list(ctx.cwd), id);
+          const base = task.baseBranch ?? await git.defaultBranch(ctx.cwd);
           if (action === "sync") {
             await tasks.sync(ctx.cwd, task.id);
-            ctx.ui.notify(`Synced ${task.id.slice(0, 8)} with main.`, "success");
+            ctx.ui.notify(`Synced ${task.id.slice(0, 8)} with ${base}.`, "success");
           } else if (action === "diff") {
             const diff = await tasks.diff(ctx.cwd, task.id);
-            ctx.ui.notify(diff || "No task changes relative to main.", "info");
+            ctx.ui.notify(diff || `No task changes relative to ${base}.`, "info");
           } else if (action === "integrate") {
-            if (!await ctx.ui.confirm("Integrate task into main", `Merge ${task.branch} into main and push only main to origin?`)) return;
+            if (!await ctx.ui.confirm(`Integrate task into ${base}`, `Merge ${task.branch} into ${base} and push only ${base} to origin?`)) return;
             const hash = await tasks.integrate(ctx.cwd, task.id);
-            ctx.ui.notify(`Integrated ${task.id.slice(0, 8)} into main (${hash.slice(0, 8)}).`, "success");
+            ctx.ui.notify(`Integrated ${task.id.slice(0, 8)} into ${base} (${hash.slice(0, 8)}).`, "success");
           } else {
             if (!await ctx.ui.confirm("Remove task worktree", `Remove worktree for ${task.title}?`)) return;
             await tasks.cleanup(ctx.cwd, task.id);
@@ -216,7 +219,7 @@ export default function (pi: ExtensionAPI) {
             ctx.ui.notify(`Committed ${result.hash.slice(0, 8)} for ${result.task.id.slice(0, 8)}.`, "success");
           }
         } else {
-          ctx.ui.notify("Usage: /bioarc-task list | create <title> | sync <id> | diff <id> | integrate <id> | cleanup <id> | complete [id] | delete [id] | commit [id] | default [id|clear] | setup [supervisor] | update", "info");
+          ctx.ui.notify("Actions: list, create, sync, diff, integrate, cleanup, complete, delete, commit, default, setup, update. See README for arguments.", "info");
         }
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");

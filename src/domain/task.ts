@@ -8,6 +8,7 @@ export interface Task {
   completedAt?: string;
   worktreePath?: string;
   branch?: string;
+  baseBranch?: string;
   commits: string[];
 }
 
