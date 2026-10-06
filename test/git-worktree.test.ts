@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { ExtensionGitAdapter } from "../src/adapters/git-adapter";
 import { TaskService } from "../src/application/task-service";
+import { JsonTaskRepository } from "../src/adapters/json-task-repository";
 import { GitSubmoduleUpdater } from "../src/adapters/git-submodule-updater";
 
 const roots: string[] = [];
@@ -36,9 +37,21 @@ test("task branch syncs with detected base, integrates, and only base is pushed"
   } as never);
   const base = await adapter.defaultBranch(main);
   assert.equal(base, "master");
-  const worktree = await adapter.createWorktree(main, "task-123", "bioarc/task-123", base);
-  const parallelWorktree = await adapter.createWorktree(main, "task-456", "bioarc/task-456", base);
+  const repository = new JsonTaskRepository(adapter);
+  const service = new TaskService(repository, adapter);
+  const task = await service.create(main, "task one");
+  const parallelTask = await service.create(main, "task two");
+  assert.equal(task.baseBranch, base);
+  const branch = task.branch;
+  assert.ok(branch);
+  const worktree = task.worktreePath;
+  assert.ok(worktree);
+  const parallelBranch = parallelTask.branch;
+  assert.ok(parallelBranch);
+  const parallelWorktree = parallelTask.worktreePath;
+  assert.ok(parallelWorktree);
   assert.notEqual(parallelWorktree, worktree);
+  assert.equal((await repository.load(main)).length, 2);
   execFileSync("git", ["config", "user.name", "BioArc Test"], { cwd: worktree });
   execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: worktree });
   writeFileSync(join(worktree, "task.txt"), "task change\n");
@@ -61,9 +74,9 @@ test("task branch syncs with detected base, integrates, and only base is pushed"
   assert.equal(remoteRefs.trim(), base);
 
   await adapter.removeWorktree(main, worktree, base);
-  assert.equal(execFileSync("git", ["branch", "--list", "bioarc/task-123"], { cwd: main, encoding: "utf8" }).trim(), "");
+  assert.equal(execFileSync("git", ["branch", "--list", branch], { cwd: main, encoding: "utf8" }).trim(), "");
   await adapter.removeWorktree(main, parallelWorktree, base);
-  assert.equal(execFileSync("git", ["branch", "--list", "bioarc/task-456"], { cwd: main, encoding: "utf8" }).trim(), "");
+  assert.equal(execFileSync("git", ["branch", "--list", parallelBranch], { cwd: main, encoding: "utf8" }).trim(), "");
   assert.equal(readFileSync(join(main, "task.txt"), "utf8"), "task change\n");
 });
 

@@ -19,7 +19,7 @@ Restart the session after updating so Oh My Pi loads the new extension version.
 ## Commands
 
 - `/bioarc-task` offers autocomplete for actions and task IDs.
-- `/bioarc-task create <title>` creates a task branch and isolated worktree from `origin`'s default branch.
+- `/bioarc-task create <title>` creates a task branch and isolated worktree from `origin`'s default branch, then selects it for the current session.
 - `/bioarc-task sync <id>` merges the latest base branch into the task branch; conflicts leave the worktree for resolution.
 - `/bioarc-task diff <id>` shows task changes relative to its base branch.
 - `/bioarc-task commit [id]` syncs first, then commits staged task-worktree changes.

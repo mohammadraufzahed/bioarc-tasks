@@ -35,7 +35,11 @@ test("selected task is injected only into its session's agent context", async ()
       registerCommand() {},
       appendEntry: async () => {},
       zod: { object: (value: unknown) => value, string: () => ({}) },
-      exec: async () => ({ code: 0, stdout: ".git", stderr: "" }),
+      exec: async (_command: string, args: string[], options: { cwd: string }) => ({
+        code: 0,
+        stdout: args[0] === "symbolic-ref" ? "origin/master" : args.includes("--git-common-dir") ? join(options.cwd, ".git") : ".git",
+        stderr: "",
+      }),
     };
     extension(pi as never);
     const session = (id: string) => ({ cwd, sessionManager: { getSessionId: () => id, getBranch: () => [] } });
@@ -67,6 +71,12 @@ test("selected task is injected only into its session's agent context", async ()
     assert.ok(promptNowB);
     assert.match(promptStillA.at(-1) ?? "", /Task for session A/);
     assert.match(promptNowB.at(-1) ?? "", /Task for session B/);
+    const create = tools.get("bioarc_task_create")!;
+    const created = await create.execute("call-create", { title: "New task" }, undefined, undefined, sessionB);
+    const createdContext = await beforeAgentStart({ systemPrompt: ["base prompt"] }, sessionB);
+    const createdPrompt = getSystemPrompt(createdContext);
+    assert.ok(createdPrompt);
+    assert.match(createdPrompt.at(-1) ?? "", /New task/);
 
     await select.execute("call-clear", { id: "clear" }, undefined, undefined, sessionA);
     assert.equal(await beforeAgentStart({ systemPrompt: ["base prompt"] }, sessionA), undefined);

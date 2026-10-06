@@ -73,7 +73,8 @@ export default function (pi: ExtensionAPI) {
     parameters: z.object({ title: z.string() }),
     async execute(_id, params, _signal, _update, ctx) {
       const task = await tasks.create(ctx.cwd, params.title);
-      return { content: [{ type: "text", text: `Task ${task.id.slice(0, 8)} created. Base: ${task.baseBranch}; branch: ${task.branch}; worktree: ${task.worktreePath}` }] };
+      await setSessionTask(ctx.sessionManager.getSessionId(), task.id);
+      return { content: [{ type: "text", text: `Task ${task.id.slice(0, 8)} created and selected for this session. Base: ${task.baseBranch}; branch: ${task.branch}; worktree: ${task.worktreePath}` }] };
     },
   });
   pi.registerTool({
@@ -183,7 +184,8 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify(current.length ? current.map((task) => `${task.id.slice(0, 8)} [${task.status}]${task.id === defaultId ? " [active session task]" : ""} ${task.title} (${task.commits.length} commits)${task.branch ? ` — ${task.baseBranch ?? "base"} — ${task.branch} — ${task.worktreePath}` : ""}`).join("\n") : "No BioArc tasks.", "info");
         } else if (action === "create") {
           const task = await tasks.create(ctx.cwd, rest.join(" "));
-          ctx.ui.notify(`Created ${task.id.slice(0, 8)}: ${task.title}\nBase: ${task.baseBranch}\nBranch: ${task.branch}\nWorktree: ${task.worktreePath}`, "success");
+          await setSessionTask(sessionId, task.id);
+          ctx.ui.notify(`Created and selected ${task.id.slice(0, 8)}: ${task.title}\nBase: ${task.baseBranch}\nBranch: ${task.branch}\nWorktree: ${task.worktreePath}`, "success");
         } else if (["sync", "diff", "integrate", "cleanup"].includes(action)) {
           const id = rest[0];
           if (!id) throw new Error(`Usage: /bioarc-task ${action} <id>`);
