@@ -53,6 +53,9 @@ test("selected task is injected only into its session's agent context", async ()
     assert.ok(promptA);
     assert.match(promptA.at(-1) ?? "", /Task for session A/);
     assert.match(promptA.at(-1) ?? "", /\/worktrees\/a/);
+    assert.match(promptA.at(-1) ?? "", /Make task changes only in the task worktree/);
+    assert.match(promptA.at(-1) ?? "", /bioarc_task_commit/);
+    assert.match(promptA.at(-1) ?? "", /never push a task branch/);
     assert.equal(contextB, undefined);
 
     await select.execute("call-b", { id: "task-session-b" }, undefined, undefined, sessionB);

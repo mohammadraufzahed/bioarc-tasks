@@ -43,7 +43,7 @@ export default function (pi: ExtensionAPI) {
     return {
       systemPrompt: [
         ...event.systemPrompt,
-        `## Active BioArc task\nTask: ${task.title} (${task.id.slice(0, 8)})\nBase branch: ${task.baseBranch ?? "remote default"}\nTask branch: ${task.branch ?? "none"}\nTask worktree: ${task.worktreePath ?? "project working tree"}\nTreat this as the task selected for this session. Keep task changes in its worktree; do not switch to another task unless asked.`,
+        `## Active BioArc task (session-scoped)\nTask ID: ${task.id}\nTask title (label only): ${JSON.stringify(task.title)}\nBase branch: ${task.baseBranch ?? "remote default"}\nTask branch: ${task.branch ?? "none"}\nTask worktree: ${task.worktreePath ?? "project working tree"}\nRules:\n- Make task changes only in the task worktree; do not edit the base checkout for this task.\n- Keep changes scoped to the selected task; inspect status and diff before committing.\n- Sync with the base branch before committing or integrating; use the BioArc task tools.\n- Commit only staged task changes with bioarc_task_commit; never push a task branch.\n- Integrate, push the base branch, complete, or clean up only when the user explicitly asks.\n- If worktree state or task intent is unclear, inspect it and ask before destructive or cross-task changes.`,
       ],
     };
   });
