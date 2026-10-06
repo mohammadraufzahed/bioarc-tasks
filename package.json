@@ -1,0 +1,10 @@
+{
+  "name": "bioarc-tasks",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Oh My Pi extension for BioArc task and commit tracking",
+  "peerDependencies": {
+    "@oh-my-pi/pi-coding-agent": "*"
+  }
+}
