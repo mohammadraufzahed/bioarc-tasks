@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { GitPort } from "../ports";
 
@@ -14,9 +14,11 @@ export class ExtensionGitAdapter implements GitPort {
   }
 
   async getGitDirectory(cwd: string): Promise<string> {
-    const result = await this.pi.exec("git", ["rev-parse", "--git-dir"], { cwd });
-    if (result.code !== 0) throw new Error("Run this command inside a Git repository.");
-    return result.stdout.trim();
+    return this.run(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  }
+
+  async getProjectRoot(cwd: string): Promise<string> {
+    return dirname(await this.getGitDirectory(cwd));
   }
   async defaultBranch(cwd: string): Promise<string> {
     const localHead = await this.pi.exec("git", ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], { cwd });
@@ -48,26 +50,28 @@ export class ExtensionGitAdapter implements GitPort {
         return existingPath;
       }
     }
-    await this.run(cwd, ["fetch", "origin", base]);
-    const commonDir = await this.run(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    const projectRoot = await this.getProjectRoot(cwd);
+    await this.run(projectRoot, ["fetch", "origin", base]);
+    const commonDir = await this.getGitDirectory(projectRoot);
     const repoKey = createHash("sha256").update(commonDir).digest("hex").slice(0, 10);
-    const path = join(homedir(), ".omp", "wt", `${basename(cwd)}-${repoKey}-${taskId}`);
-    const branchExists = await this.pi.exec("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { cwd });
+    const path = join(homedir(), ".omp", "wt", `${basename(projectRoot)}-${repoKey}-${taskId}`);
+    const branchExists = await this.pi.exec("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: projectRoot });
     if (branchExists.code !== 0 && branchExists.code !== 1) throw new Error(branchExists.stderr || "Unable to inspect the task branch.");
     const args = branchExists.code === 0
-      ? ["worktree", "add", "-C", cwd, path, branch, "--quiet"]
-      : ["worktree", "add", "-C", cwd, "-b", branch, path, `origin/${base}`, "--quiet"];
-    const result = await this.pi.exec("omp", args, { cwd });
+      ? ["worktree", "add", "-C", projectRoot, path, branch, "--quiet"]
+      : ["worktree", "add", "-C", projectRoot, "-b", branch, path, `origin/${base}`, "--quiet"];
+    const result = await this.pi.exec("omp", args, { cwd: projectRoot });
     if (result.code !== 0) throw new Error(result.stderr || result.stdout || "OMP could not create the task worktree.");
     return path;
   }
 
   async removeWorktree(cwd: string, path: string, base: string): Promise<boolean> {
     const branch = await this.run(path, ["branch", "--show-current"]);
-    await this.run(cwd, ["worktree", "remove", path]);
-    const merged = await this.run(cwd, ["branch", "--merged", base, "--list", branch]);
+    const projectRoot = await this.getProjectRoot(cwd);
+    await this.run(projectRoot, ["worktree", "remove", path]);
+    const merged = await this.run(projectRoot, ["branch", "--merged", base, "--list", branch]);
     if (!merged) return false;
-    await this.run(cwd, ["branch", "-d", branch]);
+    await this.run(projectRoot, ["branch", "-d", branch]);
     return true;
   }
 
@@ -78,35 +82,36 @@ export class ExtensionGitAdapter implements GitPort {
   }
 
   async syncWorktree(cwd: string, path: string, base: string): Promise<void> {
-    await this.run(cwd, ["fetch", "origin", base]);
+    await this.run(await this.getProjectRoot(cwd), ["fetch", "origin", base]);
     await this.run(path, ["merge", "--no-edit", `origin/${base}`]);
   }
 
   async diffWorktree(cwd: string, path: string, base: string): Promise<string> {
-    await this.run(cwd, ["fetch", "origin", base]);
+    await this.run(await this.getProjectRoot(cwd), ["fetch", "origin", base]);
     return this.run(path, ["diff", "--no-ext-diff", "--stat", `origin/${base}...HEAD`]);
   }
 
   async integrateWorktree(cwd: string, path: string, base: string): Promise<string> {
-    const status = await this.run(cwd, ["status", "--porcelain"]);
+    const projectRoot = await this.getProjectRoot(cwd);
+    const status = await this.run(projectRoot, ["status", "--porcelain"]);
     if (status) throw new Error("Base worktree has uncommitted changes; refusing integration.");
-    await this.run(cwd, ["fetch", "origin", base]);
-    const currentBranch = await this.run(cwd, ["branch", "--show-current"]);
+    await this.run(projectRoot, ["fetch", "origin", base]);
+    const currentBranch = await this.run(projectRoot, ["branch", "--show-current"]);
     if (currentBranch !== base) throw new Error(`Switch the base worktree to ${base} before integration.`);
     const taskStatus = await this.run(path, ["status", "--porcelain"]);
     if (taskStatus) throw new Error("Task worktree has uncommitted changes; commit or clean them before integration.");
     await this.run(path, ["merge", "--no-edit", `origin/${base}`]);
-    const remoteHead = await this.run(cwd, ["rev-parse", `origin/${base}`]);
-    const localHead = await this.run(cwd, ["rev-parse", "HEAD"]);
+    const remoteHead = await this.run(projectRoot, ["rev-parse", `origin/${base}`]);
+    const localHead = await this.run(projectRoot, ["rev-parse", "HEAD"]);
     if (remoteHead !== localHead) throw new Error(`Local ${base} is not aligned with origin/${base}; update it before integrating.`);
     const branch = await this.run(path, ["branch", "--show-current"]);
-    const mergeResult = await this.pi.exec("git", ["merge", "--no-ff", "--no-edit", branch], { cwd });
+    const mergeResult = await this.pi.exec("git", ["merge", "--no-ff", "--no-edit", branch], { cwd: projectRoot });
     if (mergeResult.code !== 0) {
-      await this.pi.exec("git", ["merge", "--abort"], { cwd });
+      await this.pi.exec("git", ["merge", "--abort"], { cwd: projectRoot });
       throw new Error(mergeResult.stderr || "Merge failed; task worktree was preserved.");
     }
-    const push = await this.pi.exec("git", ["push", "origin", base], { cwd });
+    const push = await this.pi.exec("git", ["push", "origin", base], { cwd: projectRoot });
     if (push.code !== 0) throw new Error(push.stderr || `Push failed; local ${base} contains the integration. Update and retry pushing ${base}.`);
-    return await this.run(cwd, ["rev-parse", "HEAD"]);
+    return this.run(projectRoot, ["rev-parse", "HEAD"]);
   }
 }

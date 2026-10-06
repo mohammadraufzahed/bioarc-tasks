@@ -19,13 +19,14 @@ Restart the session after updating so Oh My Pi loads the new extension version.
 ## Commands
 
 - `/bioarc-task` offers autocomplete for actions and task IDs.
-- `/bioarc-task create <title>` creates an OMP-managed task worktree and selects it for the current session.
+- `/bioarc-task create <title>` creates an OMP-managed task worktree and selects it for the current session; the response includes a copyable `/move "<task-worktree>"` command.
 - `/bioarc-task sync <id>` merges the latest base branch into the task branch; conflicts leave the worktree for resolution.
 - `/bioarc-task diff <id>` shows task changes relative to its base branch.
 - `/bioarc-task commit [id]` syncs first, then commits staged task-worktree changes.
 - `/bioarc-task integrate <id>` syncs, merges into the clean local base branch, and pushes only that branch to `origin`.
 - `/bioarc-task cleanup <id>` removes a clean worktree; the local branch is deleted only if merged into its base branch.
-- `/bioarc-task select [id|clear]` selects an open task for this session; existing valid worktrees are reused, and tasks without one get an OMP-managed worktree. `default` remains an alias. Every turn receives its title, branch, worktree, and task-specific rules.
+- `/bioarc-task select [id|clear]` selects an open task for this session; existing valid worktrees are reused, and tasks without one get an OMP-managed worktree. `default` remains an alias. The response includes `/move "<task-worktree>"`; clearing selection gives `/move "<project-root>"` to return to the base checkout.
+- While the session is moved, task data and supervisor settings resolve from the Git common project root, so BioArc task tools keep working from the selected worktree.
 - Commits must use `bioarc_task_commit` for only the session-selected task. If none is selected, ask the user which task before selecting it. Commit subjects require Persian task titles and supervisor names; English commit subjects are rejected.
 The AI receives `bioarc_task_select` plus `bioarc_task_create`, `bioarc_task_list`, `bioarc_task_status`, `bioarc_task_sync`, `bioarc_task_diff`, `bioarc_task_commit`, `bioarc_task_integrate`, and `bioarc_task_cleanup` tools.
 

@@ -55,7 +55,9 @@ test("selected task is injected only into its session's agent context", async ()
     const select = tools.get("bioarc_task_select")!;
     const commit = tools.get("bioarc_task_commit")!;
     await assert.rejects(async () => commit.execute("no-active", { id: "task-session-a" }, undefined, undefined, sessionC), /No task selected for this session/);
-    await select.execute("call-a", { id: "task-session-a" }, undefined, undefined, sessionA);
+    const selectionResult = await select.execute("call-a", { id: "task-session-a" }, undefined, undefined, sessionA);
+    assert.ok(JSON.stringify(selectionResult).includes("/move"));
+    assert.ok(JSON.stringify(selectionResult).includes("/worktrees/a"));
 
     const beforeAgentStart = handlers.get("before_agent_start")!;
     const contextA = await beforeAgentStart({ systemPrompt: ["base prompt"] }, sessionA);
@@ -92,7 +94,9 @@ test("selected task is injected only into its session's agent context", async ()
     assert.ok(createdPrompt);
     assert.match(createdPrompt.at(-1) ?? "", /New task/);
 
-    await select.execute("call-clear", { id: "clear" }, undefined, undefined, sessionA);
+    const clearResult = await select.execute("call-clear", { id: "clear" }, undefined, undefined, sessionA);
+    assert.ok(JSON.stringify(clearResult).includes("/move"));
+    assert.ok(JSON.stringify(clearResult).includes(cwd));
     const clearedContext = await beforeAgentStart({ systemPrompt: ["base prompt"] }, sessionA);
     const clearedPrompt = getSystemPrompt(clearedContext);
     assert.ok(clearedPrompt);

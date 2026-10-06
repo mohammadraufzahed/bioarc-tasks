@@ -14,7 +14,7 @@ export default function (pi: ExtensionAPI) {
   pi.setLabel("BioArc Tasks");
   const git = new ExtensionGitAdapter(pi);
   const tasks = new TaskService(new JsonTaskRepository(git), git);
-  const setup = new SetupService(new JsonProjectConfig(), new GitSubmoduleUpdater(pi));
+  const setup = new SetupService(new JsonProjectConfig(git), new GitSubmoduleUpdater(pi, git));
   const defaults = new Map<string, string>();
   let sessionCwd = process.cwd();
 
@@ -61,14 +61,15 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, params, _signal, _update, ctx) {
       const sessionId = ctx.sessionManager.getSessionId();
       if (params.id === "clear") {
+        const projectRoot = await git.getProjectRoot(ctx.cwd);
         await clearSessionTask(sessionId);
-        return { content: [{ type: "text", text: "Cleared active task for this session." }] };
+        return { content: [{ type: "text", text: `Cleared active task for this session. To move this session back to the project root, copy/paste:\n/move ${JSON.stringify(projectRoot)}` }] };
       }
       const chosen = resolveTask(await tasks.list(ctx.cwd), params.id);
       if (chosen.status !== "open") throw new Error("Select an open task.");
       const task = await tasks.select(ctx.cwd, chosen.id);
       await setSessionTask(sessionId, task.id);
-      return { content: [{ type: "text", text: `Selected ${task.id.slice(0, 8)} — ${task.title} for this session. Worktree: ${task.worktreePath}` }] };
+      return { content: [{ type: "text", text: `Selected ${task.id.slice(0, 8)} — ${task.title} for this session. Worktree: ${task.worktreePath}\nTo move this session into the worktree, copy/paste:\n/move ${JSON.stringify(task.worktreePath)}` }] };
     },
   });
   pi.registerTool({
@@ -79,7 +80,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, params, _signal, _update, ctx) {
       const task = await tasks.create(ctx.cwd, params.title);
       await setSessionTask(ctx.sessionManager.getSessionId(), task.id);
-      return { content: [{ type: "text", text: `Task ${task.id.slice(0, 8)} created and selected for this session. Base: ${task.baseBranch}; branch: ${task.branch}; worktree: ${task.worktreePath}` }] };
+      return { content: [{ type: "text", text: `Task ${task.id.slice(0, 8)} created and selected for this session. Base: ${task.baseBranch}; branch: ${task.branch}; worktree: ${task.worktreePath}\nTo move this session into the worktree, copy/paste:\n/move ${JSON.stringify(task.worktreePath)}` }] };
     },
   });
   pi.registerTool({
@@ -141,9 +142,11 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, params, _signal, _update, ctx) {
       const task = resolveTask(await tasks.list(ctx.cwd), params.id);
       const base = task.baseBranch ?? await git.defaultBranch(ctx.cwd);
+      const sessionId = ctx.sessionManager.getSessionId();
+      const projectRoot = defaults.get(sessionId) === task.id ? await git.getProjectRoot(ctx.cwd) : "";
       const hash = await tasks.integrate(ctx.cwd, task.id);
-      if (defaults.get(ctx.sessionManager.getSessionId()) === task.id) await clearSessionTask(ctx.sessionManager.getSessionId());
-      return { content: [{ type: "text", text: `Integrated task into ${base}; HEAD is ${hash}. Only ${base} was pushed.` }] };
+      if (projectRoot) await clearSessionTask(sessionId);
+      return { content: [{ type: "text", text: `Integrated task into ${base}; HEAD is ${hash}. Only ${base} was pushed.${projectRoot ? ` Move back with: /move ${JSON.stringify(projectRoot)}` : ""}` }] };
     },
   });
   pi.registerTool({
@@ -152,8 +155,12 @@ export default function (pi: ExtensionAPI) {
     description: "Remove a clean task worktree. Deletes its local branch only if merged into its base branch.",
     parameters: z.object({ id: z.string() }),
     async execute(_id, params, _signal, _update, ctx) {
-      await tasks.cleanup(ctx.cwd, params.id);
-      return { content: [{ type: "text", text: `Cleaned up task ${params.id}.` }] };
+      const task = resolveTask(await tasks.list(ctx.cwd), params.id);
+      const sessionId = ctx.sessionManager.getSessionId();
+      const projectRoot = defaults.get(sessionId) === task.id ? await git.getProjectRoot(ctx.cwd) : "";
+      await tasks.cleanup(ctx.cwd, task.id);
+      if (projectRoot) await clearSessionTask(sessionId);
+      return { content: [{ type: "text", text: `Cleaned up task ${task.id}.${projectRoot ? ` Move back with: /move ${JSON.stringify(projectRoot)}` : ""}` }] };
     },
   });
   pi.registerTool({
@@ -198,7 +205,7 @@ export default function (pi: ExtensionAPI) {
         } else if (action === "create") {
           const task = await tasks.create(ctx.cwd, rest.join(" "));
           await setSessionTask(sessionId, task.id);
-          ctx.ui.notify(`Created and selected ${task.id.slice(0, 8)}: ${task.title}\nBase: ${task.baseBranch}\nBranch: ${task.branch}\nWorktree: ${task.worktreePath}`, "success");
+          ctx.ui.notify(`Created and selected ${task.id.slice(0, 8)}: ${task.title}\nBase: ${task.baseBranch}\nBranch: ${task.branch}\nWorktree: ${task.worktreePath}\nTo move this session into the worktree, copy/paste:\n/move ${JSON.stringify(task.worktreePath)}`, "success");
         } else if (["sync", "diff", "integrate", "cleanup"].includes(action)) {
           const id = rest[0];
           if (!id) throw new Error(`Usage: /bioarc-task ${action} <id>`);
@@ -212,13 +219,16 @@ export default function (pi: ExtensionAPI) {
             ctx.ui.notify(diff || `No task changes relative to ${base}.`, "info");
           } else if (action === "integrate") {
             if (!await ctx.ui.confirm(`Integrate task into ${base}`, `Merge ${task.branch} into ${base} and push only ${base} to origin?`)) return;
+            const projectRoot = task.id === defaultId ? await git.getProjectRoot(ctx.cwd) : "";
             const hash = await tasks.integrate(ctx.cwd, task.id);
             if (task.id === defaultId) await clearSessionTask(sessionId);
-            ctx.ui.notify(`Integrated ${task.id.slice(0, 8)} into ${base} (${hash.slice(0, 8)}).`, "success");
+            ctx.ui.notify(`Integrated ${task.id.slice(0, 8)} into ${base} (${hash.slice(0, 8)}).${projectRoot ? `\nTo move this session back, copy/paste:\n/move ${JSON.stringify(projectRoot)}` : ""}`, "success");
           } else {
             if (!await ctx.ui.confirm("Remove task worktree", `Remove worktree for ${task.title}?`)) return;
+            const projectRoot = task.id === defaultId ? await git.getProjectRoot(ctx.cwd) : "";
             await tasks.cleanup(ctx.cwd, task.id);
-            ctx.ui.notify(`Removed worktree for ${task.id.slice(0, 8)}.`, "success");
+            if (task.id === defaultId) await clearSessionTask(sessionId);
+            ctx.ui.notify(`Removed worktree for ${task.id.slice(0, 8)}.${projectRoot ? `\nTo move this session back, copy/paste:\n/move ${JSON.stringify(projectRoot)}` : ""}`, "success");
           }
         } else if (action === "setup") {
           const current = await setup.supervisor(ctx.cwd);
@@ -231,8 +241,9 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify("BioArc Tasks extension updated. Restart the session to load the new version.", "success");
         } else if (["default", "select"].includes(action)) {
           if (rest[0] === "clear") {
+            const projectRoot = await git.getProjectRoot(ctx.cwd);
             await clearSessionTask(sessionId);
-            return ctx.ui.notify("Active task cleared for this session.", "success");
+            return ctx.ui.notify(`Active task cleared for this session. To move back to the project root, copy/paste:\n/move ${JSON.stringify(projectRoot)}`, "success");
           }
           const current = await tasks.list(ctx.cwd);
           const selected = rest[0]
@@ -245,7 +256,7 @@ export default function (pi: ExtensionAPI) {
           if (!selected || selected.status !== "open") return ctx.ui.notify("Choose an open task.", "error");
           const activeTask = await tasks.select(ctx.cwd, selected.id);
           await setSessionTask(sessionId, activeTask.id);
-          ctx.ui.notify(`Active task for this session: ${activeTask.id.slice(0, 8)} — ${activeTask.title}\nWorktree: ${activeTask.worktreePath}`, "success");
+          ctx.ui.notify(`Active task for this session: ${activeTask.id.slice(0, 8)} — ${activeTask.title}\nWorktree: ${activeTask.worktreePath}\nTo move this session into the worktree, copy/paste:\n/move ${JSON.stringify(activeTask.worktreePath)}`, "success");
         } else if (["complete", "delete", "commit"].includes(action)) {
           const current = await tasks.list(ctx.cwd);
           if (action === "commit" && defaultId && rest[0] && resolveTask(current, rest[0]).id !== defaultId) {
@@ -259,16 +270,21 @@ export default function (pi: ExtensionAPI) {
           }
           if (!id) return ctx.ui.notify("No task selected.", "error");
           const task = resolveTask(current, id);
-          if (action === "commit" && task.id !== defaultId) await setSessionTask(sessionId, task.id);
+          const projectRoot = task.id === defaultId ? await git.getProjectRoot(ctx.cwd) : "";
+          if (action === "commit" && task.id !== defaultId) {
+            const activeTask = await tasks.select(ctx.cwd, task.id);
+            await setSessionTask(sessionId, activeTask.id);
+            ctx.ui.notify(`Selected ${activeTask.id.slice(0, 8)} — ${activeTask.title}. To move this session into its worktree, copy/paste:\n/move ${JSON.stringify(activeTask.worktreePath)}`, "info");
+          }
           if (action === "complete") {
             await tasks.complete(ctx.cwd, task.id);
             if (task.id === defaultId) await clearSessionTask(sessionId);
-            ctx.ui.notify(`Completed ${task.id.slice(0, 8)}.`, "success");
+            ctx.ui.notify(`Completed ${task.id.slice(0, 8)}.${projectRoot ? `\nTo move this session back, copy/paste:\n/move ${JSON.stringify(projectRoot)}` : ""}`, "success");
           } else if (action === "delete") {
             if (!await ctx.ui.confirm("Delete BioArc task", `${task.title} and its task record? Git history will not change.`)) return;
             await tasks.delete(ctx.cwd, task.id);
             if (task.id === defaultId) await clearSessionTask(sessionId);
-            ctx.ui.notify(`Deleted ${task.id.slice(0, 8)}; Git history unchanged.`, "success");
+            ctx.ui.notify(`Deleted ${task.id.slice(0, 8)}; Git history unchanged.${projectRoot ? `\nTo move this session back, copy/paste:\n/move ${JSON.stringify(projectRoot)}` : ""}`, "success");
           } else {
             const supervisor = await setup.supervisor(ctx.cwd);
             if (!supervisor) throw new Error("Run /bioarc-task setup to configure the supervisor first.");
