@@ -6,6 +6,8 @@ export interface Task {
   status: "open" | "completed";
   createdAt: string;
   completedAt?: string;
+  worktreePath?: string;
+  branch?: string;
   commits: string[];
 }
 
