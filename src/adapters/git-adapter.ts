@@ -1,7 +1,4 @@
-import { existsSync, rmSync, statfsSync } from "node:fs";
-import { createHash } from "node:crypto";
-import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { GitPort } from "../ports";
 
@@ -14,20 +11,12 @@ export class ExtensionGitAdapter implements GitPort {
     return result.stdout.trim();
   }
 
-  async getGitDirectory(cwd: string): Promise<string> {
+  getGitDirectory(cwd: string): Promise<string> {
     return this.run(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
   }
 
   async getProjectRoot(cwd: string): Promise<string> {
     return dirname(await this.getGitDirectory(cwd));
-  }
-  async defaultBranch(cwd: string): Promise<string> {
-    const localHead = await this.pi.exec("git", ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], { cwd });
-    if (localHead.code === 0 && localHead.stdout.trim().startsWith("origin/")) return localHead.stdout.trim().slice("origin/".length);
-    const remoteHead = await this.pi.exec("git", ["ls-remote", "--symref", "origin", "HEAD"], { cwd });
-    const match = remoteHead.stdout.match(/^ref: refs\/heads\/(.+)\tHEAD$/m);
-    if (remoteHead.code !== 0 || !match?.[1]) throw new Error(remoteHead.stderr || "Unable to detect origin's default branch.");
-    return match[1];
   }
 
   async hasStagedChanges(cwd: string): Promise<boolean> {
@@ -40,98 +29,5 @@ export class ExtensionGitAdapter implements GitPort {
   async commit(cwd: string, message: string): Promise<string> {
     await this.run(cwd, ["commit", "-m", message]);
     return this.run(cwd, ["rev-parse", "HEAD"]);
-  }
-
-  async ensureWorktree(cwd: string, taskId: string, branch: string, base: string, existingPath?: string): Promise<string> {
-    if (existingPath) {
-      const existing = await this.pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd: existingPath });
-      if (existing.code === 0) {
-        const existingBranch = await this.run(existingPath, ["branch", "--show-current"]);
-        if (existingBranch !== branch) throw new Error(`Task worktree is on branch ${existingBranch || "(detached)"}, expected ${branch}.`);
-        return existingPath;
-      }
-    }
-    const projectRoot = await this.getProjectRoot(cwd);
-    await this.run(projectRoot, ["fetch", "origin", base]);
-    const commonDir = await this.getGitDirectory(projectRoot);
-    const repoKey = createHash("sha256").update(commonDir).digest("hex").slice(0, 10);
-    const path = join(homedir(), ".omp", "wt", `${basename(projectRoot)}-${repoKey}-${taskId}`);
-    if (existsSync(path)) throw new Error(`Task worktree path already exists: ${path}`);
-    const branchExists = await this.pi.exec("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: projectRoot });
-    if (branchExists.code !== 0 && branchExists.code !== 1) throw new Error(branchExists.stderr || "Unable to inspect the task branch.");
-    const args = branchExists.code === 0
-      ? ["worktree", "add", "-C", projectRoot, path, branch, "--quiet"]
-      : ["worktree", "add", "-C", projectRoot, "-b", branch, path, `origin/${base}`, "--quiet"];
-    const result = await this.pi.exec("omp", args, { cwd: projectRoot });
-    if (result.code !== 0) {
-      const rollback = await this.pi.exec("git", ["worktree", "remove", "--force", path], { cwd: projectRoot });
-      if (rollback.code !== 0) {
-        rmSync(path, { recursive: true, force: true });
-        await this.pi.exec("git", ["worktree", "prune"], { cwd: projectRoot });
-      }
-      if (branchExists.code === 1) {
-        const branchHead = await this.pi.exec("git", ["rev-parse", `refs/heads/${branch}`], { cwd: projectRoot });
-        const baseHead = await this.pi.exec("git", ["rev-parse", `origin/${base}`], { cwd: projectRoot });
-        if (branchHead.code === 0 && baseHead.code === 0 && branchHead.stdout.trim() === baseHead.stdout.trim()) {
-          await this.pi.exec("git", ["branch", "-d", branch], { cwd: projectRoot });
-        }
-      }
-      const disk = statfsSync(projectRoot);
-      const availableMiB = Math.floor(disk.bavail * disk.bsize / (1024 * 1024));
-      const spaceHint = availableMiB < 512 ? ` Only ${availableMiB} MiB is free; free disk space before retrying.` : "";
-      const rollbackHint = rollback.code === 0 ? " The failed worktree was rolled back." : " The partial directory was removed and Git metadata pruned.";
-      throw new Error(`${result.stderr || result.stdout || "OMP could not create the task worktree."}${spaceHint}${rollbackHint}`);
-    }
-    return path;
-  }
-
-  async removeWorktree(cwd: string, path: string, base: string): Promise<boolean> {
-    const branch = await this.run(path, ["branch", "--show-current"]);
-    const projectRoot = await this.getProjectRoot(cwd);
-    await this.run(projectRoot, ["worktree", "remove", path]);
-    const merged = await this.run(projectRoot, ["branch", "--merged", base, "--list", branch]);
-    if (!merged) return false;
-    await this.run(projectRoot, ["branch", "-d", branch]);
-    return true;
-  }
-
-  async worktreeStatus(cwd: string, path: string): Promise<{ branch: string; dirty: boolean }> {
-    const branch = await this.run(path, ["branch", "--show-current"]);
-    const dirty = (await this.run(path, ["status", "--porcelain"])).length > 0;
-    return { branch, dirty };
-  }
-
-  async syncWorktree(cwd: string, path: string, base: string): Promise<void> {
-    await this.run(await this.getProjectRoot(cwd), ["fetch", "origin", base]);
-    await this.run(path, ["merge", "--no-edit", `origin/${base}`]);
-  }
-
-  async diffWorktree(cwd: string, path: string, base: string): Promise<string> {
-    await this.run(await this.getProjectRoot(cwd), ["fetch", "origin", base]);
-    return this.run(path, ["diff", "--no-ext-diff", "--stat", `origin/${base}...HEAD`]);
-  }
-
-  async integrateWorktree(cwd: string, path: string, base: string): Promise<string> {
-    const projectRoot = await this.getProjectRoot(cwd);
-    const status = await this.run(projectRoot, ["status", "--porcelain"]);
-    if (status) throw new Error("Base worktree has uncommitted changes; refusing integration.");
-    await this.run(projectRoot, ["fetch", "origin", base]);
-    const currentBranch = await this.run(projectRoot, ["branch", "--show-current"]);
-    if (currentBranch !== base) throw new Error(`Switch the base worktree to ${base} before integration.`);
-    const taskStatus = await this.run(path, ["status", "--porcelain"]);
-    if (taskStatus) throw new Error("Task worktree has uncommitted changes; commit or clean them before integration.");
-    await this.run(path, ["merge", "--no-edit", `origin/${base}`]);
-    const remoteHead = await this.run(projectRoot, ["rev-parse", `origin/${base}`]);
-    const localHead = await this.run(projectRoot, ["rev-parse", "HEAD"]);
-    if (remoteHead !== localHead) throw new Error(`Local ${base} is not aligned with origin/${base}; update it before integrating.`);
-    const branch = await this.run(path, ["branch", "--show-current"]);
-    const mergeResult = await this.pi.exec("git", ["merge", "--no-ff", "--no-edit", branch], { cwd: projectRoot });
-    if (mergeResult.code !== 0) {
-      await this.pi.exec("git", ["merge", "--abort"], { cwd: projectRoot });
-      throw new Error(mergeResult.stderr || "Merge failed; task worktree was preserved.");
-    }
-    const push = await this.pi.exec("git", ["push", "origin", base], { cwd: projectRoot });
-    if (push.code !== 0) throw new Error(push.stderr || `Push failed; local ${base} contains the integration. Update and retry pushing ${base}.`);
-    return this.run(projectRoot, ["rev-parse", "HEAD"]);
   }
 }

@@ -1,9 +1,9 @@
 # BioArc Tasks
 
-Oh My Pi extension for managing tasks and creating BioArc-style task commits.
-Tasks are stored in each repository's Git directory (`bioarc-tasks.json`), not
-in the worktree. Deleting a task removes only its record; Git history is never
-rewritten.
+Oh My Pi extension for task tracking and BioArc-style task commits.
+Tasks are labels stored in the repository's shared Git directory. Selecting a task
+does not create, switch, or remove branches or worktrees; commits affect the current
+session checkout only. Deleting a task removes only its record; Git history is never rewritten.
 
 ## Install
 
@@ -19,16 +19,12 @@ Restart the session after updating so Oh My Pi loads the new extension version.
 ## Commands
 
 - `/bioarc-task` offers autocomplete for actions and task IDs.
-- `/bioarc-task create <title>` creates an OMP-managed task worktree and selects it for the current session; the response includes a copyable `/move "<task-worktree>"` command.
-- `/bioarc-task sync <id>` merges the latest base branch into the task branch; conflicts leave the worktree for resolution.
-- `/bioarc-task diff <id>` shows task changes relative to its base branch.
-- `/bioarc-task commit [id]` syncs first, then commits staged task-worktree changes.
-- `/bioarc-task integrate <id>` syncs, merges into the clean local base branch, and pushes only that branch to `origin`.
-- `/bioarc-task cleanup <id>` removes a clean worktree; the local branch is deleted only if merged into its base branch.
-- `/bioarc-task select [id|clear]` selects an open task for this session; existing valid worktrees are reused, and tasks without one get an OMP-managed worktree. `default` remains an alias. The response includes `/move "<task-worktree>"`; clearing selection gives `/move "<project-root>"` to return to the base checkout.
-- While the session is moved, task data and supervisor settings resolve from the Git common project root, so BioArc task tools keep working from the selected worktree.
-- Commits must use `bioarc_task_commit` for only the session-selected task. If none is selected, ask the user which task before selecting it. Commit subjects require Persian task titles and supervisor names; English commit subjects are rejected.
-The AI receives `bioarc_task_select` plus `bioarc_task_create`, `bioarc_task_list`, `bioarc_task_status`, `bioarc_task_sync`, `bioarc_task_diff`, `bioarc_task_commit`, `bioarc_task_integrate`, and `bioarc_task_cleanup` tools.
+- `/bioarc-task create <title>` creates a task record and selects it for the current session.
+- `/bioarc-task list`
+- `/bioarc-task select [id|clear]` selects an open task for the current session; `default` remains an alias.
+- `/bioarc-task commit [id]` commits only staged changes in the current checkout for the session-selected task. If no task is selected, the command asks you to choose one.
+- `/bioarc-task complete [id]`, `/bioarc-task delete [id]`, `/bioarc-task setup [supervisor]`, `/bioarc-task update`.
+The AI receives `bioarc_task_select`, `bioarc_task_create`, `bioarc_task_list`, and `bioarc_task_commit` task tools.
 
 Task IDs are UUIDs; their first eight characters are shown and work as short IDs.
 Defaults are persisted in session history and remain separate per session.
@@ -37,13 +33,7 @@ task's changes first. Subjects follow:
 
 `نوع کامیت: تسک میزیتو عنوان تسک: <عنوان> فرد محول کننده: <سرپرست>`
 
-Task worktrees are created with `omp worktree add` under `~/.omp/wt/<project-and-task>`;
-they appear in `omp worktree list`. OMP does not expose a targeted remove command,
-so cleanup uses Git's per-worktree removal after checking the task worktree is clean;
-it never invokes OMP's global clear operation.
-The base branch is detected from `origin/HEAD` (falling back to the remote HEAD ref).
-Integration refuses a dirty base worktree or local base branch that differs from
-the fetched remote; rejected pushes never force-push.
+Tasks do not provide isolation. If you need parallel checkouts, manage those separately with OMP; this extension does not create or clean them.
 
 ## Structure
 

@@ -22,8 +22,8 @@ test("selected task is injected only into its session's agent context", async ()
   try {
     mkdirSync(join(cwd, ".git"));
     const tasks = [
-      { id: "task-session-a", title: "Task for session A", status: "open", createdAt: "2026-01-01T00:00:00.000Z", commits: [], branch: "bioarc/a", baseBranch: "master", worktreePath: "/worktrees/a" },
-      { id: "task-session-b", title: "Task for session B", status: "open", createdAt: "2026-01-01T00:00:00.000Z", commits: [], branch: "bioarc/b", baseBranch: "master", worktreePath: "/worktrees/b" },
+      { id: "task-session-a", title: "Task for session A", status: "open", createdAt: "2026-01-01T00:00:00.000Z", commits: [] },
+      { id: "task-session-b", title: "Task for session B", status: "open", createdAt: "2026-01-01T00:00:00.000Z", commits: [] },
     ];
     writeFileSync(join(cwd, ".git", "bioarc-tasks.json"), JSON.stringify(tasks));
     const handlers = new Map<string, Hook>();
@@ -37,10 +37,7 @@ test("selected task is injected only into its session's agent context", async ()
       zod: { object: (value: unknown) => value, string: () => ({}) },
       exec: async (_command: string, args: string[], options: { cwd: string }) => ({
         code: 0,
-        stdout: args[0] === "symbolic-ref" ? "origin/master"
-          : args[0] === "rev-parse" && args[1] === "--show-toplevel" ? options.cwd
-          : args[0] === "branch" && args[1] === "--show-current" ? options.cwd === "/worktrees/a" ? "bioarc/a" : "bioarc/b"
-          : args.includes("--git-common-dir") ? join(options.cwd, ".git") : ".git",
+        stdout: args[0] === "symbolic-ref" ? "origin/master" : args.includes("--git-common-dir") ? join(options.cwd, ".git") : ".git",
         stderr: "",
       }),
     };
@@ -56,8 +53,7 @@ test("selected task is injected only into its session's agent context", async ()
     const commit = tools.get("bioarc_task_commit")!;
     await assert.rejects(async () => commit.execute("no-active", { id: "task-session-a" }, undefined, undefined, sessionC), /No task selected for this session/);
     const selectionResult = await select.execute("call-a", { id: "task-session-a" }, undefined, undefined, sessionA);
-    assert.ok(JSON.stringify(selectionResult).includes("/move"));
-    assert.ok(JSON.stringify(selectionResult).includes("/worktrees/a"));
+    assert.ok(JSON.stringify(selectionResult).includes("Work remains in the current checkout"));
 
     const beforeAgentStart = handlers.get("before_agent_start")!;
     const contextA = await beforeAgentStart({ systemPrompt: ["base prompt"] }, sessionA);
@@ -65,12 +61,12 @@ test("selected task is injected only into its session's agent context", async ()
     const promptA = getSystemPrompt(contextA);
     assert.ok(promptA);
     assert.match(promptA.at(-1) ?? "", /Task for session A/);
-    assert.match(promptA.at(-1) ?? "", /\/worktrees\/a/);
-    assert.match(promptA.at(-1) ?? "", /Treat this task worktree as this session's project root/);
+    assert.match(promptA.at(-1) ?? "", /Current checkout/);
+    assert.match(promptA.at(-1) ?? "", /Tasks are labels only/);
     assert.match(promptA.at(-1) ?? "", /bioarc_task_commit/);
-    assert.match(promptA.at(-1) ?? "", /Never push a task branch/);
-    assert.match(promptA.at(-1) ?? "", /never use OMP Git UI/);
-    assert.match(promptA.at(-1) ?? "", /ask the user which task/);
+    assert.match(promptA.at(-1) ?? "", /Do not push unless the user explicitly asks/);
+    assert.match(promptA.at(-1) ?? "", /never use generic OMP Git tools/);
+    assert.match(promptA.at(-1) ?? "", /ask which task/);
     assert.match(promptA.at(-1) ?? "", /no English\/free-form commit messages/);
     const promptB = getSystemPrompt(contextB);
     assert.ok(promptB);
@@ -95,8 +91,7 @@ test("selected task is injected only into its session's agent context", async ()
     assert.match(createdPrompt.at(-1) ?? "", /New task/);
 
     const clearResult = await select.execute("call-clear", { id: "clear" }, undefined, undefined, sessionA);
-    assert.ok(JSON.stringify(clearResult).includes("/move"));
-    assert.ok(JSON.stringify(clearResult).includes(cwd));
+    assert.ok(JSON.stringify(clearResult).includes("Current checkout is unchanged"));
     const clearedContext = await beforeAgentStart({ systemPrompt: ["base prompt"] }, sessionA);
     const clearedPrompt = getSystemPrompt(clearedContext);
     assert.ok(clearedPrompt);
