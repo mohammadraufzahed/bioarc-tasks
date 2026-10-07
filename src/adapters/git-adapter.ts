@@ -1,3 +1,4 @@
+import { existsSync, rmSync, statfsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -55,13 +56,32 @@ export class ExtensionGitAdapter implements GitPort {
     const commonDir = await this.getGitDirectory(projectRoot);
     const repoKey = createHash("sha256").update(commonDir).digest("hex").slice(0, 10);
     const path = join(homedir(), ".omp", "wt", `${basename(projectRoot)}-${repoKey}-${taskId}`);
+    if (existsSync(path)) throw new Error(`Task worktree path already exists: ${path}`);
     const branchExists = await this.pi.exec("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: projectRoot });
     if (branchExists.code !== 0 && branchExists.code !== 1) throw new Error(branchExists.stderr || "Unable to inspect the task branch.");
     const args = branchExists.code === 0
       ? ["worktree", "add", "-C", projectRoot, path, branch, "--quiet"]
       : ["worktree", "add", "-C", projectRoot, "-b", branch, path, `origin/${base}`, "--quiet"];
     const result = await this.pi.exec("omp", args, { cwd: projectRoot });
-    if (result.code !== 0) throw new Error(result.stderr || result.stdout || "OMP could not create the task worktree.");
+    if (result.code !== 0) {
+      const rollback = await this.pi.exec("git", ["worktree", "remove", "--force", path], { cwd: projectRoot });
+      if (rollback.code !== 0) {
+        rmSync(path, { recursive: true, force: true });
+        await this.pi.exec("git", ["worktree", "prune"], { cwd: projectRoot });
+      }
+      if (branchExists.code === 1) {
+        const branchHead = await this.pi.exec("git", ["rev-parse", `refs/heads/${branch}`], { cwd: projectRoot });
+        const baseHead = await this.pi.exec("git", ["rev-parse", `origin/${base}`], { cwd: projectRoot });
+        if (branchHead.code === 0 && baseHead.code === 0 && branchHead.stdout.trim() === baseHead.stdout.trim()) {
+          await this.pi.exec("git", ["branch", "-d", branch], { cwd: projectRoot });
+        }
+      }
+      const disk = statfsSync(projectRoot);
+      const availableMiB = Math.floor(disk.bavail * disk.bsize / (1024 * 1024));
+      const spaceHint = availableMiB < 512 ? ` Only ${availableMiB} MiB is free; free disk space before retrying.` : "";
+      const rollbackHint = rollback.code === 0 ? " The failed worktree was rolled back." : " The partial directory was removed and Git metadata pruned.";
+      throw new Error(`${result.stderr || result.stdout || "OMP could not create the task worktree."}${spaceHint}${rollbackHint}`);
+    }
     return path;
   }
 

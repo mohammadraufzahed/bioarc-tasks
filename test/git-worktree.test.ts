@@ -110,6 +110,35 @@ test("task branch syncs with detected base, integrates, and only base is pushed"
   assert.equal(readFileSync(join(main, "task.txt"), "utf8"), "task change\n");
 });
 
+test("failed OMP checkout removes its partial worktree and newly-created branch", { timeout: 30_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "bioarc-git-rollback-test-"));
+  roots.push(root);
+  const origin = join(root, "origin.git");
+  const main = join(root, "main");
+  execFileSync("git", ["init", "--bare", "--initial-branch=master", origin]);
+  execFileSync("git", ["clone", origin, main]);
+  execFileSync("git", ["config", "user.name", "BioArc Test"], { cwd: main });
+  execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: main });
+  writeFileSync(join(main, "base.txt"), "base\n");
+  execFileSync("git", ["add", "base.txt"], { cwd: main });
+  execFileSync("git", ["commit", "-m", "base"], { cwd: main });
+  execFileSync("git", ["push", "origin", "master"], { cwd: main });
+  const adapter = new ExtensionGitAdapter({
+    exec: async (command: string, args: string[], options: { cwd: string }) => {
+      const result = spawnSync(command, args, { cwd: options.cwd, encoding: "utf8" });
+      if (command === "omp" && result.status === 0) {
+        worktrees.push({ cwd: options.cwd, path: args[args.indexOf("-b") + 2]! });
+        return { code: 1, stdout: "", stderr: "simulated checkout failure" };
+      }
+      return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
+    },
+  } as never);
+  await assert.rejects(adapter.ensureWorktree(main, "failed-task", "bioarc/task-failed", "master"), /simulated checkout failure/);
+  const worktreeEntries = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: main, encoding: "utf8" }).split("\n").filter((line) => line.startsWith("worktree "));
+  assert.equal(worktreeEntries.length, 1);
+  assert.equal(execFileSync("git", ["branch", "--list", "bioarc/task-failed"], { cwd: main, encoding: "utf8" }).trim(), "");
+});
+
 test("self-update pulls the configured extension checkout without a parent gitlink", async () => {
   const root = mkdtempSync(join(tmpdir(), "bioarc-update-test-"));
   roots.push(root);
