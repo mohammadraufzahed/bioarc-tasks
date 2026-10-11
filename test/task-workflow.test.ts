@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
 import { ExtensionGitAdapter } from "../src/adapters/git-adapter";
 import { GitSubmoduleUpdater } from "../src/adapters/git-submodule-updater";
@@ -28,8 +28,8 @@ test("task commits use only the current checkout and record the selected task", 
 
   const git = new ExtensionGitAdapter({
     exec: async (command: string, args: string[], options: { cwd: string }) => {
-      if (command !== "git") throw new Error(`Unexpected command: ${command}`);
-      const result = spawnSync(command, args, { cwd: options.cwd, encoding: "utf8" });
+      if (!command.endsWith("git")) throw new Error(`Unexpected command: ${command}`);
+      const result = spawnSync("git", args, { cwd: options.cwd, encoding: "utf8" });
       return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
     },
   } as never);
@@ -39,6 +39,10 @@ test("task commits use only the current checkout and record the selected task", 
   assert.equal((await service.select(root, task.id)).id, task.id);
   assert.equal(execFileSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).trim(), "master");
   assert.equal(execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: root, encoding: "utf8" }).split("\n").filter((line) => line.startsWith("worktree ")).length, 1);
+  const taskWorktree = await git.createTaskWorktree(root, task.id);
+  roots.push(dirname(taskWorktree));
+  assert.equal(execFileSync("git", ["branch", "--show-current"], { cwd: taskWorktree, encoding: "utf8" }).trim(), `bioarc-task/${task.id.slice(0, 8)}`);
+  assert.equal(execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: taskWorktree, encoding: "utf8" }).trim(), taskWorktree);
   await assert.rejects(service.commit(root, task.id, "سرپرست"), /Stage the task's changes first/);
 
   writeFileSync(join(root, "source.txt"), "task change\n");

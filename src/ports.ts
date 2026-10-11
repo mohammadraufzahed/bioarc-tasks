@@ -8,6 +8,7 @@ export interface TaskRepository {
 export interface GitPort {
   getGitDirectory(cwd: string): Promise<string>;
   getProjectRoot(cwd: string): Promise<string>;
+  createTaskWorktree(cwd: string, taskId: string): Promise<string>;
   hasStagedChanges(cwd: string): Promise<boolean>;
   commit(cwd: string, message: string): Promise<string>;
 }

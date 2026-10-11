@@ -8,7 +8,7 @@ import { JsonTaskRepository } from "./src/adapters/json-task-repository";
 import { resolveTask } from "./src/domain/task";
 
 const defaultType = "com.bioarc.tasks.session-default";
-const actions = ["list", "create", "complete", "delete", "commit", "default", "select", "setup", "update"];
+const actions = ["list", "create", "worktree", "complete", "delete", "commit", "default", "select", "setup", "update"];
 
 export default function (pi: ExtensionAPI) {
   pi.setLabel("BioArc Tasks");
@@ -94,6 +94,18 @@ export default function (pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
+    name: "bioarc_task_worktree",
+    label: "Create task worktree",
+    description: "Create an isolated Git worktree and branch for an open BioArc task. Returns its path; the current OMP session does not switch directories.",
+    parameters: z.object({ id: z.string() }),
+    async execute(_id, params, _signal, _update, ctx) {
+      const task = resolveTask(await tasks.list(ctx.cwd), params.id);
+      if (task.status !== "open") throw new Error("Create a worktree for an open task.");
+      const path = await git.createTaskWorktree(ctx.cwd, task.id);
+      return { content: [{ type: "text", text: `Created worktree for ${task.id.slice(0, 8)} — ${task.title} at ${path}. OMP session remains in ${ctx.cwd}; switch/open that path separately.` }] };
+    },
+  });
+  pi.registerTool({
     name: "bioarc_task_commit",
     label: "Commit task changes",
     description: "Commit staged changes only for the task selected in this session. If none is selected, ask the user which task before selecting it. Uses the Persian BioArc commit format; never use generic Git commit tools.",
@@ -118,12 +130,12 @@ export default function (pi: ExtensionAPI) {
     getArgumentCompletions: async (prefix) => {
       const [action, ...parts] = prefix.split(/\s+/);
       if (!action || !prefix.includes(" ")) return actions.filter((value) => value.startsWith(action ?? "")).map((value) => ({ value: `${value} `, label: value }));
-      if (!["complete", "delete", "commit", "default", "select"].includes(action)) return null;
+      if (!["complete", "delete", "commit", "default", "select", "worktree"].includes(action)) return null;
       try {
         const taskPrefix = parts[0] ?? "";
         const available = await tasks.list(sessionCwd);
         const matching = available
-          .filter((task) => !["commit", "default", "select"].includes(action) || task.status === "open")
+          .filter((task) => !["commit", "default", "select", "worktree"].includes(action) || task.status === "open")
           .filter((task) => task.id.startsWith(taskPrefix) || task.id.slice(0, 8).startsWith(taskPrefix))
           .map((task) => ({ value: `${action} ${task.id.slice(0, 8)}`, label: `${task.id.slice(0, 8)} — ${task.title}`, description: task.status }));
         if (["default", "select"].includes(action) && "clear".startsWith(taskPrefix)) matching.unshift({ value: `${action} clear`, label: "clear selected task", description: "Clear this session's active task" });
@@ -150,6 +162,11 @@ export default function (pi: ExtensionAPI) {
           if (!supervisor?.trim()) return ctx.ui.notify("Setup cancelled; supervisor unchanged.", "info");
           await setup.configureSupervisor(ctx.cwd, supervisor);
           ctx.ui.notify(`BioArc Tasks configured. Supervisor: ${supervisor.trim()}`, "success");
+        } else if (action === "worktree") {
+          const task = resolveTask(await tasks.list(ctx.cwd), rest[0] ?? defaultId);
+          if (task.status !== "open") throw new Error("Create a worktree for an open task.");
+          const path = await git.createTaskWorktree(ctx.cwd, task.id);
+          ctx.ui.notify(`Created worktree for ${task.id.slice(0, 8)} — ${task.title}: ${path}. OMP session remains in ${ctx.cwd}; switch/open that path separately.`, "success");
         } else if (action === "update") {
           await setup.update(ctx.cwd);
           ctx.ui.notify("BioArc Tasks extension updated. Restart the session to load the new version.", "success");

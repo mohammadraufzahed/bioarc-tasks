@@ -21,10 +21,9 @@ Restart the session after updating so Oh My Pi loads the new extension version.
 - `/bioarc-task` offers autocomplete for actions and task IDs.
 - `/bioarc-task create <title>` creates a task record and selects it for the current session.
 - `/bioarc-task list`
-- `/bioarc-task select [id|clear]` selects an open task for the current session; `default` remains an alias.
-- `/bioarc-task commit [id]` commits only staged changes in the current checkout for the session-selected task. If no task is selected, the command asks you to choose one.
+- `/bioarc-task worktree [id]` creates an isolated `bioarc-task/<id>` branch and worktree for an open task; defaults to the session-selected task. It prints the path; OMP does not switch the current session automatically.
 - `/bioarc-task complete [id]`, `/bioarc-task delete [id]`, `/bioarc-task setup [supervisor]`, `/bioarc-task update`.
-The AI receives `bioarc_task_select`, `bioarc_task_create`, `bioarc_task_list`, and `bioarc_task_commit` task tools.
+- The AI receives `bioarc_task_select`, `bioarc_task_create`, `bioarc_task_list`, `bioarc_task_commit`, and `bioarc_task_worktree` task tools.
 
 Task IDs are UUIDs; their first eight characters are shown and work as short IDs.
 Defaults are persisted in session history and remain separate per session.
@@ -33,7 +32,7 @@ task's changes first. Subjects follow:
 
 `نوع کامیت: تسک میزیتو عنوان تسک: <عنوان> فرد محول کننده: <سرپرست>`
 
-Tasks do not provide isolation. If you need parallel checkouts, manage those separately with OMP; this extension does not create or clean them.
+Task worktrees are sibling checkouts under `<repo>-worktrees/<id>` on a new `bioarc-task/<id>` branch. Creation returns the path; OMP's extension API does not switch the active session checkout.
 
 ## Structure
 
